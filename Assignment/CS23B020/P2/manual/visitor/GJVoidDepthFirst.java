@@ -3,51 +3,49 @@
 //
 
 package visitor;
-
 import syntaxtree.*;
 import java.util.*;
 
 /**
  * Provides default methods which visit each node in the tree in depth-first
- * order. Your visitors may extend this class.
+ * order.  Your visitors may extend this class.
  */
 public class GJVoidDepthFirst<A> implements GJVoidVisitor<A> {
    //
    // Auto class visitors--probably don't need to be overridden.
    //
    public void visit(NodeList n, A argu) {
-      int _count = 0;
-      for (Enumeration<Node> e = n.elements(); e.hasMoreElements();) {
-         e.nextElement().accept(this, argu);
+      int _count=0;
+      for ( Enumeration<Node> e = n.elements(); e.hasMoreElements(); ) {
+         e.nextElement().accept(this,argu);
          _count++;
       }
    }
 
    public void visit(NodeListOptional n, A argu) {
-      if (n.present()) {
-         int _count = 0;
-         for (Enumeration<Node> e = n.elements(); e.hasMoreElements();) {
-            e.nextElement().accept(this, argu);
+      if ( n.present() ) {
+         int _count=0;
+         for ( Enumeration<Node> e = n.elements(); e.hasMoreElements(); ) {
+            e.nextElement().accept(this,argu);
             _count++;
          }
       }
    }
 
    public void visit(NodeOptional n, A argu) {
-      if (n.present())
-         n.node.accept(this, argu);
+      if ( n.present() )
+         n.node.accept(this,argu);
    }
 
    public void visit(NodeSequence n, A argu) {
-      int _count = 0;
-      for (Enumeration<Node> e = n.elements(); e.hasMoreElements();) {
-         e.nextElement().accept(this, argu);
+      int _count=0;
+      for ( Enumeration<Node> e = n.elements(); e.hasMoreElements(); ) {
+         e.nextElement().accept(this,argu);
          _count++;
       }
    }
 
-   public void visit(NodeToken n, A argu) {
-   }
+   public void visit(NodeToken n, A argu) {}
 
    //
    // User-generated visitor methods below
@@ -105,7 +103,7 @@ public class GJVoidDepthFirst<A> implements GJVoidVisitor<A> {
 
    /**
     * f0 -> ClassDeclaration()
-    * | ClassExtendsDeclaration()
+    *       | ClassExtendsDeclaration()
     */
    public void visit(TypeDeclaration n, A argu) {
       n.f0.accept(this, argu);
@@ -151,7 +149,7 @@ public class GJVoidDepthFirst<A> implements GJVoidVisitor<A> {
 
    /**
     * f0 -> SimpleVarDeclaration()
-    * | FinalVarDeclaration()
+    *       | FinalVarDeclaration()
     */
    public void visit(VarDeclaration n, A argu) {
       n.f0.accept(this, argu);
@@ -245,9 +243,9 @@ public class GJVoidDepthFirst<A> implements GJVoidVisitor<A> {
 
    /**
     * f0 -> ArrayType()
-    * | BooleanType()
-    * | IntegerType()
-    * | Identifier()
+    *       | BooleanType()
+    *       | IntegerType()
+    *       | Identifier()
     */
    public void visit(Type n, A argu) {
       n.f0.accept(this, argu);
@@ -280,13 +278,13 @@ public class GJVoidDepthFirst<A> implements GJVoidVisitor<A> {
 
    /**
     * f0 -> Block()
-    * | AssignmentStatement()
-    * | ArrayAssignmentStatement()
-    * | FieldAssignmentStatement()
-    * | IfStatement()
-    * | WhileStatement()
-    * | ForStatement()
-    * | PrintStatement()
+    *       | AssignmentStatement()
+    *       | ArrayAssignmentStatement()
+    *       | FieldAssignmentStatement()
+    *       | IfStatement()
+    *       | WhileStatement()
+    *       | ForStatement()
+    *       | PrintStatement()
     */
    public void visit(Statement n, A argu) {
       n.f0.accept(this, argu);
@@ -433,15 +431,16 @@ public class GJVoidDepthFirst<A> implements GJVoidVisitor<A> {
    }
 
    /**
-    * f0 -> AndExpression()
-    * | CompareExpression()
-    * | PlusExpression()
-    * | MinusExpression()
-    * | TimesExpression()
-    * | ArrayLookup()
-    * | ArrayLength()
-    * | MessageSend()
-    * | PrimaryExpression()
+    * f0 -> ORExpression()
+    *       | AndExpression()
+    *       | CompareExpression()
+    *       | PlusExpression()
+    *       | MinusExpression()
+    *       | TimesExpression()
+    *       | ArrayLookup()
+    *       | ArrayLength()
+    *       | MessageSend()
+    *       | PrimaryExpression()
     */
    public void visit(Expression n, A argu) {
       n.f0.accept(this, argu);
@@ -453,6 +452,17 @@ public class GJVoidDepthFirst<A> implements GJVoidVisitor<A> {
     * f2 -> PrimaryExpression()
     */
    public void visit(AndExpression n, A argu) {
+      n.f0.accept(this, argu);
+      n.f1.accept(this, argu);
+      n.f2.accept(this, argu);
+   }
+
+   /**
+    * f0 -> PrimaryExpression()
+    * f1 -> "|"
+    * f2 -> PrimaryExpression()
+    */
+   public void visit(ORExpression n, A argu) {
       n.f0.accept(this, argu);
       n.f1.accept(this, argu);
       n.f2.accept(this, argu);
@@ -563,14 +573,14 @@ public class GJVoidDepthFirst<A> implements GJVoidVisitor<A> {
 
    /**
     * f0 -> IntegerLiteral()
-    * | TrueLiteral()
-    * | FalseLiteral()
-    * | Identifier()
-    * | ThisExpression()
-    * | ArrayAllocationExpression()
-    * | AllocationExpression()
-    * | NotExpression()
-    * | BracketExpression()
+    *       | TrueLiteral()
+    *       | FalseLiteral()
+    *       | Identifier()
+    *       | ThisExpression()
+    *       | ArrayAllocationExpression()
+    *       | AllocationExpression()
+    *       | NotExpression()
+    *       | BracketExpression()
     */
    public void visit(PrimaryExpression n, A argu) {
       n.f0.accept(this, argu);

@@ -260,7 +260,8 @@ public interface Visitor {
    public void visit(PrintStatement n);
 
    /**
-    * f0 -> AndExpression()
+    * f0 -> ORExpression()
+    *       | AndExpression()
     *       | CompareExpression()
     *       | PlusExpression()
     *       | MinusExpression()
@@ -278,6 +279,13 @@ public interface Visitor {
     * f2 -> PrimaryExpression()
     */
    public void visit(AndExpression n);
+
+   /**
+    * f0 -> PrimaryExpression()
+    * f1 -> "|"
+    * f2 -> PrimaryExpression()
+    */
+   public void visit(ORExpression n);
 
    /**
     * f0 -> PrimaryExpression()

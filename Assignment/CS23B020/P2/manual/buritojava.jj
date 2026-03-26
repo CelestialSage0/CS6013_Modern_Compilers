@@ -38,6 +38,7 @@ TOKEN :
 | < TIMES: "*" >
 | < MINUS: "-" >
 | < AND : "&" >   
+| < OR : "|" >   
 | < NOT : "!" >   
 | < BOOLEAN: "boolean" >   
 | < CLASS: "class" >
@@ -310,6 +311,9 @@ void PrintStatement() :
 void Expression() :
 {}
 {
+  LOOKAHEAD( PrimaryExpression() "|" )
+  ORExpression()
+|
   LOOKAHEAD( PrimaryExpression() "&" )
   AndExpression()
 |
@@ -341,6 +345,11 @@ void AndExpression() :
 {} 
 {
   PrimaryExpression() "&" PrimaryExpression()
+}
+void ORExpression() :
+{} 
+{
+  PrimaryExpression() "|" PrimaryExpression()
 }
 
 void CompareExpression() :
@@ -479,5 +488,4 @@ void BracketExpression() :
 {
   "(" Expression() ")"
 }
-
 

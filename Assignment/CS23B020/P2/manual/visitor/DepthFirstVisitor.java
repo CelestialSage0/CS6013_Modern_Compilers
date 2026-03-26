@@ -421,7 +421,8 @@ public class DepthFirstVisitor implements Visitor {
    }
 
    /**
-    * f0 -> AndExpression()
+    * f0 -> ORExpression()
+    *       | AndExpression()
     *       | CompareExpression()
     *       | PlusExpression()
     *       | MinusExpression()
@@ -441,6 +442,17 @@ public class DepthFirstVisitor implements Visitor {
     * f2 -> PrimaryExpression()
     */
    public void visit(AndExpression n) {
+      n.f0.accept(this);
+      n.f1.accept(this);
+      n.f2.accept(this);
+   }
+
+   /**
+    * f0 -> PrimaryExpression()
+    * f1 -> "|"
+    * f2 -> PrimaryExpression()
+    */
+   public void visit(ORExpression n) {
       n.f0.accept(this);
       n.f1.accept(this);
       n.f2.accept(this);

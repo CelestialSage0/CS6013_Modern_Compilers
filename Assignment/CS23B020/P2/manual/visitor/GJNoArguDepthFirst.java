@@ -491,7 +491,8 @@ public class GJNoArguDepthFirst<R> implements GJNoArguVisitor<R> {
    }
 
    /**
-    * f0 -> AndExpression()
+    * f0 -> ORExpression()
+    *       | AndExpression()
     *       | CompareExpression()
     *       | PlusExpression()
     *       | MinusExpression()
@@ -513,6 +514,19 @@ public class GJNoArguDepthFirst<R> implements GJNoArguVisitor<R> {
     * f2 -> PrimaryExpression()
     */
    public R visit(AndExpression n) {
+      R _ret=null;
+      n.f0.accept(this);
+      n.f1.accept(this);
+      n.f2.accept(this);
+      return _ret;
+   }
+
+   /**
+    * f0 -> PrimaryExpression()
+    * f1 -> "|"
+    * f2 -> PrimaryExpression()
+    */
+   public R visit(ORExpression n) {
       R _ret=null;
       n.f0.accept(this);
       n.f1.accept(this);

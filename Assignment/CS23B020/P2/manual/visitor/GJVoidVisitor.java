@@ -260,7 +260,8 @@ public interface GJVoidVisitor<A> {
    public void visit(PrintStatement n, A argu);
 
    /**
-    * f0 -> AndExpression()
+    * f0 -> ORExpression()
+    *       | AndExpression()
     *       | CompareExpression()
     *       | PlusExpression()
     *       | MinusExpression()
@@ -278,6 +279,13 @@ public interface GJVoidVisitor<A> {
     * f2 -> PrimaryExpression()
     */
    public void visit(AndExpression n, A argu);
+
+   /**
+    * f0 -> PrimaryExpression()
+    * f1 -> "|"
+    * f2 -> PrimaryExpression()
+    */
+   public void visit(ORExpression n, A argu);
 
    /**
     * f0 -> PrimaryExpression()

@@ -618,6 +618,21 @@ public class SymbolTableBuilder implements GJVisitor<String, String> {
 
     /**
      * f0 -> PrimaryExpression()
+     * f1 -> "|"
+     * f2 -> PrimaryExpression()
+     */
+    public String visit(ORExpression n, String argu) {
+        String _ret = null;
+        String P1 = n.f0.accept(this, argu);
+        n.f1.accept(this, argu);
+        String P2 = n.f2.accept(this, argu);
+        String exp = P1 + " | " + P2;
+
+        return _ret;
+    }
+
+    /**
+     * f0 -> PrimaryExpression()
      * f1 -> "<"
      * f2 -> PrimaryExpression()
      */

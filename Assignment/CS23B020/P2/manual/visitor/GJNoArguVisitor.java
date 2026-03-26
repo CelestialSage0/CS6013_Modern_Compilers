@@ -260,7 +260,8 @@ public interface GJNoArguVisitor<R> {
    public R visit(PrintStatement n);
 
    /**
-    * f0 -> AndExpression()
+    * f0 -> ORExpression()
+    *       | AndExpression()
     *       | CompareExpression()
     *       | PlusExpression()
     *       | MinusExpression()
@@ -278,6 +279,13 @@ public interface GJNoArguVisitor<R> {
     * f2 -> PrimaryExpression()
     */
    public R visit(AndExpression n);
+
+   /**
+    * f0 -> PrimaryExpression()
+    * f1 -> "|"
+    * f2 -> PrimaryExpression()
+    */
+   public R visit(ORExpression n);
 
    /**
     * f0 -> PrimaryExpression()

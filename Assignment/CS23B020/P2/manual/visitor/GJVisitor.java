@@ -260,7 +260,8 @@ public interface GJVisitor<R,A> {
    public R visit(PrintStatement n, A argu);
 
    /**
-    * f0 -> AndExpression()
+    * f0 -> ORExpression()
+    *       | AndExpression()
     *       | CompareExpression()
     *       | PlusExpression()
     *       | MinusExpression()
@@ -278,6 +279,13 @@ public interface GJVisitor<R,A> {
     * f2 -> PrimaryExpression()
     */
    public R visit(AndExpression n, A argu);
+
+   /**
+    * f0 -> PrimaryExpression()
+    * f1 -> "|"
+    * f2 -> PrimaryExpression()
+    */
+   public R visit(ORExpression n, A argu);
 
    /**
     * f0 -> PrimaryExpression()

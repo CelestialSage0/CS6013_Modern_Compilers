@@ -645,7 +645,8 @@ public class GJDepthFirst implements GJVisitor<String, String> {
    }
 
    /**
-    * f0 -> AndExpression()
+    * f0 -> ORExpression()
+    * | AndExpression()
     * | CompareExpression()
     * | PlusExpression()
     * | MinusExpression()
@@ -667,13 +668,68 @@ public class GJDepthFirst implements GJVisitor<String, String> {
     * f2 -> PrimaryExpression()
     */
    public String visit(AndExpression n, String argu) {
-      String _ret = null;
-      String P1 = n.f0.accept(this, argu);
-      n.f1.accept(this, argu);
-      String P2 = n.f2.accept(this, argu);
-      String exp = P1 + " & " + P2;
+      // 1. Evaluate LHS and grab its buffer
+      String p1 = n.f0.accept(this, argu);
+      String p1_exps = exps;
+      exps = ""; // Clear immediately!
 
-      return exp;
+      n.f1.accept(this, argu);
+
+      // 2. Evaluate RHS and grab its buffer
+      String p2 = n.f2.accept(this, argu);
+      String p2_exps = exps;
+      exps = ""; // Clear immediately!
+
+      // 3. Create a temp to hold the final true/false result
+      String resultTemp = getTemp();
+      tempMap.put(resultTemp, "boolean");
+
+      // 4. Build the short-circuiting if-statement!
+      exps += p1_exps; // LHS statements always execute
+      exps += "if (" + p1 + ") {\n";
+      exps += p2_exps; // RHS statements ONLY execute if LHS is true!
+      exps += resultTemp + " = " + p2 + ";\n";
+      exps += "} else {\n";
+      exps += resultTemp + " = false;\n";
+      exps += "}\n";
+
+      // 5. Return the temporary holding the result
+      return resultTemp;
+   }
+
+   /**
+    * f0 -> PrimaryExpression()
+    * f1 -> "|"
+    * f2 -> PrimaryExpression()
+    */
+   public String visit(ORExpression n, String argu) {
+      // 1. Evaluate LHS and grab its buffer
+      String p1 = n.f0.accept(this, argu);
+      String p1_exps = exps;
+      exps = ""; // Clear immediately!
+
+      n.f1.accept(this, argu);
+
+      // 2. Evaluate RHS and grab its buffer
+      String p2 = n.f2.accept(this, argu);
+      String p2_exps = exps;
+      exps = ""; // Clear immediately!
+
+      // 3. Create a temp to hold the final true/false result
+      String resultTemp = getTemp();
+      tempMap.put(resultTemp, "boolean");
+
+      // 4. Build the short-circuiting if-statement!
+      exps += p1_exps; // LHS statements always execute
+      exps += "if (" + p1 + ") {\n";
+      exps += resultTemp + " = true;\n"; // If LHS is true, OR is true!
+      exps += "} else {\n";
+      exps += p2_exps; // RHS statements ONLY execute if LHS is false!
+      exps += resultTemp + " = " + p2 + ";\n";
+      exps += "}\n";
+
+      // 5. Return the temporary holding the result
+      return resultTemp;
    }
 
    /**
@@ -682,7 +738,6 @@ public class GJDepthFirst implements GJVisitor<String, String> {
     * f2 -> PrimaryExpression()
     */
    public String visit(CompareExpression n, String argu) {
-      String _ret = null;
       String P1 = n.f0.accept(this, argu);
       n.f1.accept(this, argu);
       String P2 = n.f2.accept(this, argu);
@@ -753,7 +808,7 @@ public class GJDepthFirst implements GJVisitor<String, String> {
    public String visit(ArrayLength n, String argu) {
       String P1 = n.f0.accept(this, argu);
       n.f1.accept(this, argu);
-      String P2 = n.f2.accept(this, argu);
+      String P2 = n.f2.toString();
       String exp = P1 + "." + P2;
       return exp;
    }

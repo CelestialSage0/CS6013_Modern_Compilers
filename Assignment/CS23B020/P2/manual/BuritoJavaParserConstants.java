@@ -43,59 +43,61 @@ public interface BuritoJavaParserConstants {
   /** RegularExpression Id. */
   int AND = 22;
   /** RegularExpression Id. */
-  int NOT = 23;
+  int OR = 23;
   /** RegularExpression Id. */
-  int BOOLEAN = 24;
+  int NOT = 24;
   /** RegularExpression Id. */
-  int CLASS = 25;
+  int BOOLEAN = 25;
   /** RegularExpression Id. */
-  int INTERFACE = 26;
+  int CLASS = 26;
   /** RegularExpression Id. */
-  int ELSE = 27;
+  int INTERFACE = 27;
   /** RegularExpression Id. */
-  int EXTENDS = 28;
+  int ELSE = 28;
   /** RegularExpression Id. */
-  int FALSE = 29;
+  int EXTENDS = 29;
   /** RegularExpression Id. */
-  int IF = 30;
+  int FALSE = 30;
   /** RegularExpression Id. */
-  int WHILE = 31;
+  int IF = 31;
   /** RegularExpression Id. */
-  int FOR = 32;
+  int WHILE = 32;
   /** RegularExpression Id. */
-  int INTEGER = 33;
+  int FOR = 33;
   /** RegularExpression Id. */
-  int LENGTH = 34;
+  int INTEGER = 34;
   /** RegularExpression Id. */
-  int MAIN = 35;
+  int LENGTH = 35;
   /** RegularExpression Id. */
-  int NEW = 36;
+  int MAIN = 36;
   /** RegularExpression Id. */
-  int PUBLIC = 37;
+  int NEW = 37;
   /** RegularExpression Id. */
-  int RETURN = 38;
+  int PUBLIC = 38;
   /** RegularExpression Id. */
-  int STATIC = 39;
+  int RETURN = 39;
   /** RegularExpression Id. */
-  int STRING = 40;
+  int STATIC = 40;
   /** RegularExpression Id. */
-  int THIS = 41;
+  int STRING = 41;
   /** RegularExpression Id. */
-  int TRUE = 42;
+  int THIS = 42;
   /** RegularExpression Id. */
-  int PRINT = 43;
+  int TRUE = 43;
   /** RegularExpression Id. */
-  int VOID = 44;
+  int PRINT = 44;
   /** RegularExpression Id. */
-  int FINAL = 45;
+  int VOID = 45;
   /** RegularExpression Id. */
-  int INTEGER_LITERAL = 46;
+  int FINAL = 46;
   /** RegularExpression Id. */
-  int IDENTIFIER = 47;
+  int INTEGER_LITERAL = 47;
   /** RegularExpression Id. */
-  int LETTER = 48;
+  int IDENTIFIER = 48;
   /** RegularExpression Id. */
-  int DIGIT = 49;
+  int LETTER = 49;
+  /** RegularExpression Id. */
+  int DIGIT = 50;
 
   /** Lexical state. */
   int DEFAULT = 0;
@@ -125,6 +127,7 @@ public interface BuritoJavaParserConstants {
     "\"*\"",
     "\"-\"",
     "\"&\"",
+    "\"|\"",
     "\"!\"",
     "\"boolean\"",
     "\"class\"",
