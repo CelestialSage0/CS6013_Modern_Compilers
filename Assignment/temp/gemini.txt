@@ -1,0 +1,459 @@
+ I am translating Burito Java to Taco Java
+
+These are the files I am using
+
+On this input, i get an error that I got out of array bound
+Gemini said
+
+The reason you are getting an ArrayIndexOutOfBoundsException is that your generated Taco Java code is getting stuck in an infinite loop, causing your index variable to increment well past the array's capacity.
+The Root Cause: Stale while Loop Conditions
+
+If you look at the Print() method in your generated output.java, you'll see this:
+Java
+
+    j = 1;
+    _t50 = j < size;    // <-- Condition evaluated ONCE before the loop
+    while (_t50) {
+        {
+            _t51 = number[j]; // ArrayIndexOutOfBoundsException happens here!
+            System.out.println(_t51);
+            _t52 = 1;
+            j = j + _t52;
+        }
+    }
+
+In your CodeGenVisitor.java, when you evaluate the WhileStatement, you extract the condition into a temporary variable (_t50) before the loop starts. However, you never update this temporary variable inside the loop body. Because _t50 stays true forever, j keeps incrementing indefinitely until number[j] exceeds the array's size of 20.
+The Fix: Re-evaluate the Condition Inside the Loop
+
+To fix this, you need to append the condition re-evaluation to the very end of your while loop block so that it updates your temporary variable on every iteration.
+
+Here is the updated visit(WhileStatement n, CodeGenContext ctx) method for your CodeGenVisitor.java:
+Java
+
+    /**
+     * WhileStatement: "while" "(" Expression() ")" Statement()
+     * f2=condition, f4=body
+     * TacoJava: condition must be Identifier.
+     */
+    @Override
+    public String visit(WhileStatement n, CodeGenContext ctx) {
+        // 1. Evaluate condition before the loop
+        String cond = normalizeExprToIdent(n.f2, ctx);
+        
+        ctx.emitStmt("while (" + cond + ") {");
+        ctx.pushIndent();
+        
+        // 2. Execute the body of the loop
+        n.f4.accept(this, ctx);
+        
+        // 3. Re-evaluate the expression at the end of the loop body
+        // This emits any required setup temps into the loop body and 
+        // assigns the fresh evaluation back to our initial condition variable.
+        String nextCond = visitExpression(n.f2, ctx);
+        ctx.emitStmt(cond + " = " + nextCond + ";");
+        
+        ctx.popIndent();
+        ctx.emitStmt("}");
+        return null;
+    }
+
+What this changes in output.java
+
+Once you recompile your visitor and run it on input.java, your loops will successfully re-assign _t50 (or the equivalent loop condition variable) at the bottom of the block:
+Java
+
+    j = 1;
+    _t50 = j < size;
+    while (_t50) {
+        {
+            _t51 = number[j];
+            System.out.println(_t51);
+            _t52 = 1;
+            j = j + _t52;
+        }
+        _t50 = j < size; // <-- Now the condition updates per iteration!
+    }
+
+(Note: You actually acknowledged a very similar constraint in a comment above your ForStatement visitor about complex conditions not re-evaluating. You can apply this exact same visitExpression strategy to the end of your ForStatement blocks to make them completely robust too!)
+
+Would you like me to show you how to apply this same re-evaluation logic to your ForStatement, or do you want to look at fixing the short-circuiting logic in your AndExpression and ORExpression visitors next?
+You said
+
+I am getting outputs like this
+
+public boolean SetRight(Tree rn) {
+
+right = rn;
+
+return true;
+
+}
+
+
+public boolean SetLeft(Tree ln) {
+
+left = ln;
+
+return true;
+
+}
+
+
+You can only return an identifier
+
+here it is true
+Gemini said
+
+The reason you are seeing return true; instead of a temporary identifier is due to how your isSimpleIdent() helper method is implemented at the bottom of CodeGenVisitor.java.
+The Root Cause
+
+When your visit(MethodDeclaration n, CodeGenContext ctx) evaluates the return expression, it tries to normalize it using toIdent().
+
+toIdent calls isSimpleIdent("true"). Because "true" is composed entirely of letters, isSimpleIdent returns true. It thinks "true" is a valid variable name! Since it assumes it's already an identifier, it skips creating a temporary variable and just returns the literal string.
+The Fix
+
+You need to explicitly prevent Java keywords and literals like "true", "false", and "this" from being classified as simple variable identifiers.
+
+Update the isSimpleIdent method at the very bottom of your CodeGenVisitor.java file to explicitly reject these keywords:
+Java
+
+    /**
+     * Returns true if s is a valid Java identifier (letter/$/_ followed by
+     * letter/digit/$/_ only). Used to decide whether a temp is needed.
+     */
+    private boolean isSimpleIdent(String s) {
+        if (s == null || s.isEmpty())
+            return false;
+            
+        // ADD THIS CHECK: Reject literals and keywords
+        if (s.equals("true") || s.equals("false") || s.equals("this") || s.equals("null")) {
+            return false;
+        }
+
+        char first = s.charAt(0);
+        if (!Character.isLetter(first) && first != '_' && first != '$')
+            return false;
+        for (int i = 1; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!Character.isLetterOrDigit(c) && c != '_' && c != '$')
+                return false;
+        }
+        return true;
+    }
+
+Why this works
+
+Once you add that if statement, isSimpleIdent("true") will return false.
+
+Because it's no longer considered a simple identifier, your toIdent() method will properly generate a temporary variable for it, resulting in the correct TacoJava output:
+Java
+
+    public boolean SetRight(Tree rn) {
+        boolean _t0;
+        right = rn;
+        _t0 = true;
+        return _t0;
+    }
+
+You said
+
+Check these
+
+java output.java
+
+output.java:522: error: method visit in class Visitor cannot be applied to given types;
+
+    nti = v.visit(_t81);
+
+           ^
+
+  required: Tree
+
+  found:    Object
+
+  reason: argument mismatch; Object cannot be converted to Tree
+
+1 error
+
+error: compilation failed
+
+
+I am getting this error
+Gemini said
+
+The error required: Tree found: Object means your TacoJava compiler generated a temporary variable typed as Object (e.g., Object _t81;) and passed it into a method that strictly requires a Tree argument.
+
+This happens because your CodeGenVisitor failed to correctly infer the return type of the expression that was passed as the argument, causing it to fall back to "Object".
+
+The root cause is a bug in how you are inferring types for method calls (message sends).
+The Bug in inferMessageSendType
+
+If we look closely at your inferMessageSendType method in CodeGenVisitor.java:
+Java
+
+    private String inferMessageSendType(MessageSend ms, CodeGenContext ctx) {
+        String methodName = ms.f2.f0.tokenImage;
+        // BUG IS HERE:
+        if (ctx.currentClass != null) {
+            String ret = ctx.symTable.getMethodReturnType(ctx.currentClass, methodName);
+            if (!"Object".equals(ret))
+                return ret;
+        }
+        // ... fallback ...
+    }
+
+When evaluating a method call like n.GetRight(), the compiler needs to know the type of n (the receiver) to look up the method GetRight.
+
+However, your code completely ignores the receiver (ms.f0)! Instead, it asks the symbol table to look for the method inside ctx.currentClass (the class where the code is currently executing). If you call n.GetRight() from inside your Visitor class, the compiler searches Visitor for GetRight, fails to find it, and eventually falls back to "Object".
+The Fix
+
+You need to infer the type of the receiver first, and then ask the Symbol Table to look up the method inside that specific class.
+
+Update your inferMessageSendType method at the bottom of CodeGenVisitor.java to look like this:
+Java
+
+    /**
+     * Infer the return type of a MessageSend by looking up the method
+     * in the symbol table using the inferred type of the RECEIVER.
+     */
+    private String inferMessageSendType(MessageSend ms, CodeGenContext ctx) {
+        String methodName = ms.f2.f0.tokenImage;
+        
+        // 1. Infer the type of the receiver (e.g. 'n' in 'n.GetRight()')
+        String receiverType = inferPrimType(ms.f0, ctx);
+        
+        // 2. Look up the method in the receiver's class hierarchy
+        if (receiverType != null && !"Object".equals(receiverType)) {
+            String ret = ctx.symTable.getMethodReturnType(receiverType, methodName);
+            if (!"Object".equals(ret)) {
+                return ret;
+            }
+        }
+        
+        // 3. Fallback: Search all classes (best-effort for untyped receivers)
+        for (SymbolTable.ClassInfo ci : ctx.symTable.getAllClasses().values()) {
+            SymbolTable.MethodInfo mi = ci.getMethod(methodName);
+            if (mi != null)
+                return mi.returnType;
+        }
+        return "Object";
+    }
+
+Why this works
+
+By calling inferPrimType(ms.f0, ctx), you correctly extract the type of the receiver. If the BuritoJava code says n.GetRight(), the compiler will realize n is of type "Tree".
+
+It will then call ctx.symTable.getMethodReturnType("Tree", "GetRight"), which will successfully return "Tree". Your temporary variable will now be properly generated as Tree _t81; instead of Object _t81;, and the compilation error will go away.
+You said
+
+public int accept(Visitor v) {
+
+int nti;
+
+int _t80;
+
+Object _t81;
+
+int _t82;
+
+_t80 = 333;
+
+System.out.println(_t80);
+
+_t81 = this;
+
+nti = v.visit(_t81);
+
+_t82 = 0;
+
+return _t82;
+
+}
+
+
+sane error
+Gemini said
+
+The error you are encountering (required: Tree found: Object) happens because your generated TacoJava code is creating a temporary variable for this, but typing it as Object instead of its actual class type (e.g., Tree).
+
+Because TacoJava method calls strictly require identifiers as arguments, extracting this into a temporary variable (_t81 = this;) is correct behavior. The only bug is the type of that temporary variable (Object _t81; instead of Tree _t81;).
+
+Here is why this is happening and how to fix it:
+1. ctx.currentClass is Evaluating to "Object"
+
+In your provided code, your inferPrimType correctly attempts to handle ThisExpression:
+Java
+
+if (choice instanceof ThisExpression)
+    return ctx.currentClass != null ? ctx.currentClass : "Object";
+
+If this is outputting Object _t81;, it means one of two things is happening:
+
+    You have not recompiled your CodeGenVisitor.java since adding this logic, so the compiler is using an older .class file that falls back to "Object".
+
+    ctx.currentClass is somehow resolving to null in your live environment, causing the ternary operator to default to "Object".
+
+The Fix:
+Ensure your inferPrimType method explicitly handles ThisExpression securely, and verify you are running javac CodeGenVisitor.java to compile these changes.
+
+Replace your inferPrimType with this slightly more robust version to prevent it from ever falling through:
+Java
+
+    private String inferPrimType(PrimaryExpression n, CodeGenContext ctx) {
+        Node choice = n.f0.choice;
+        if (choice instanceof IntegerLiteral) return "int";
+        if (choice instanceof TrueLiteral) return "boolean";
+        if (choice instanceof FalseLiteral) return "boolean";
+        
+        if (choice instanceof Identifier) {
+            String name = ((Identifier) choice).f0.tokenImage;
+            return ctx.symTable.lookupVarType(name, ctx.currentClass, ctx.currentMethod);
+        }
+        
+        // Ensure 'this' correctly grabs the current class scope
+        if (choice instanceof ThisExpression) {
+            if (ctx.currentClass != null) {
+                return ctx.currentClass;
+            }
+            return "Object"; 
+        }
+        
+        if (choice instanceof ArrayAllocationExpression) return "int[]";
+        if (choice instanceof AllocationExpression) {
+            return ((AllocationExpression) choice).f1.f0.tokenImage;
+        }
+        if (choice instanceof NotExpression) return "boolean";
+        if (choice instanceof BracketExpression) {
+            return inferExprType(((BracketExpression) choice).f1, ctx);
+        }
+        return "int";
+    }
+
+2. You reverted the inferMessageSendType fix
+
+I noticed in the CodeGenVisitor.java code you provided, your inferMessageSendType is still using the buggy version that completely ignores the receiver type (e.g., ignoring n in n.GetRight()).
+
+If you do not update this, you will immediately run into another required: Tree found: Object error as soon as you evaluate a method call on an object.
+
+Update your inferMessageSendType (near the bottom of the file) to infer the receiver's type first:
+Java
+
+    private String inferMessageSendType(MessageSend ms, CodeGenContext ctx) {
+        String methodName = ms.f2.f0.tokenImage;
+        
+        // 1. Infer the type of the receiver FIRST
+        String receiverType = inferPrimType(ms.f0, ctx);
+        
+        // 2. Look up the method in that specific class
+        if (receiverType != null && !"Object".equals(receiverType)) {
+            String ret = ctx.symTable.getMethodReturnType(receiverType, methodName);
+            if (!"Object".equals(ret)) {
+                return ret;
+            }
+        }
+        
+        // 3. Fallback: Search all classes
+        for (SymbolTable.ClassInfo ci : ctx.symTable.getAllClasses().values()) {
+            SymbolTable.MethodInfo mi = ci.getMethod(methodName);
+            if (mi != null)
+                return mi.returnType;
+        }
+        return "Object";
+    }
+
+3. Verify your isSimpleIdent fix
+
+Just to be absolutely sure, verify that your isSimpleIdent method at the very bottom of your file is successfully rejecting keywords so that TacoJava wraps them in temporaries properly. Your pasted code was missing this check. It should look like this:
+Java
+
+    private boolean isSimpleIdent(String s) {
+        if (s == null || s.isEmpty()) return false;
+            
+        // Must reject these so they get extracted to temporary identifiers!
+        if (s.equals("true") || s.equals("false") || s.equals("this") || s.equals("null")) {
+            return false;
+        }
+
+        char first = s.charAt(0);
+        if (!Character.isLetter(first) && first != '_' && first != '$') return false;
+        for (int i = 1; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!Character.isLetterOrDigit(c) && c != '_' && c != '$') return false;
+        }
+        return true;
+    }
+
+Make sure to recompile all your .java files after making these changes. Once recompiled, ctx.newTemp(type) will correctly receive "Tree" instead of "Object", and it will correctly output Tree _t81; in your final TacoJava file.
+You said
+
+This is the current scenario
+Gemini said
+
+The reason you are still seeing Object _t81 = this; is due to a very subtle state bug in your CodeGenContext.java file.
+The Root Cause
+
+If you look at your CodeGenContext.java file, you have this method:
+Java
+
+  public String exitMethodScope() {
+    // ... flushes buffers ...
+    
+    // Reset
+    varDecls = null;
+    tempDecls = null;
+    bodyStmts = null;
+    currentClass = null; // <-- THE BUG IS HERE
+    currentMethod = null;
+    indentLevel = 0;
+    return sb.toString();
+  }
+
+In your CodeGenVisitor.java, currentClass is set once when visiting a ClassDeclaration. But because your exitMethodScope() sets currentClass = null at the end of every method, the context forgets what class it is in after the very first method finishes compiling.
+
+Because accept() is the 4th method in your Tree class, ctx.currentClass has long been null by the time it gets compiled. Because it doesn't know what class it's in, your inferPrimType method falls back to Object when it sees the this keyword.
+The Fix
+
+Step 1: Update CodeGenContext.java
+Remove currentClass = null; from your exitMethodScope() method so the class context survives across multiple methods.
+Java
+
+  public String exitMethodScope() {
+    StringBuilder sb = new StringBuilder();
+    for (String d : varDecls)
+      sb.append("    ").append(d).append("\n");
+    for (String d : tempDecls)
+      sb.append("    ").append(d).append("\n");
+    sb.append(bodyStmts);
+    
+    // Reset
+    varDecls = null;
+    tempDecls = null;
+    bodyStmts = null;
+    // currentClass = null;  <-- REMOVE THIS LINE
+    currentMethod = null;
+    indentLevel = 0;
+    return sb.toString();
+  }
+
+Step 2: Ensure inferPrimType is properly mapped
+In CodeGenVisitor.java, double-check that your inferPrimType explicitly handles the ThisExpression like this:
+Java
+
+    private String inferPrimType(PrimaryExpression n, CodeGenContext ctx) {
+        Node choice = n.f0.choice;
+        // ... (other literal checks) ...
+        
+        if (choice instanceof ThisExpression) {
+            // Because of the fix above, ctx.currentClass will now correctly be "Tree"
+            return ctx.currentClass != null ? ctx.currentClass : "Object"; 
+        }
+        
+        // ... (other checks) ...
+        return "Object";
+    }
+
+Why this solves it
+
+Once you remove that line and recompile your compiler (javac *.java), ctx.currentClass will correctly stay "Tree" for all methods inside the Tree class.
+
+When your visitor reaches v.visit(this); inside the accept method, it will successfully infer that this has the type "Tree". It will output Tree _t81; instead of Object _t81;, and the compilation error will disappear!
