@@ -11,7 +11,7 @@ import java.util.*;
  * Provides default methods which visit each node in the tree in depth-first
  * order. Your visitors may extend this class.
  */
-public class GJDepthFirst<Object, Object> implements GJVisitor<R, A> {
+public class GJDepthFirst implements GJVisitor<Object, Object> {
   //
   // Auto class visitors--probably don't need to be overridden.
   //

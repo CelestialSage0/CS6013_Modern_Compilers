@@ -1,3 +1,15 @@
+class Main {
+  public static void main(String[] a) {
+    A obj;
+    int result;
+    int b;
+    obj = new A();
+    b = 5;
+    result = obj.live(b);
+    System.out.println(result);
+  }
+}
+
 class A {
   public int live(int x) {
     int r;
@@ -12,15 +24,5 @@ class A {
     z = 42;
     System.out.println(z);
     return z;
-  }
-}
-
-class Main {
-  public static void main(String[] a) {
-    A obj;
-    int result;
-    obj = new A();
-    result = obj.live(5);
-    System.out.println(result);
   }
 }

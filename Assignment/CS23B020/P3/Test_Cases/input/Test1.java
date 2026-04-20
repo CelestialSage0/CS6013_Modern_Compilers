@@ -4,13 +4,16 @@ class Main {
     int y;
     boolean cond;
     int z;
+    int b;
+
     x = 4;
-    y = x * 2;
+    b = 2;
+    y = x * b;
     cond = false;
     if (cond) {
       z = 100;
     } else {
-      z = y + 2;
+      z = y + b;
     }
     System.out.println(z);
   }

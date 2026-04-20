@@ -3,12 +3,15 @@ class Main {
     int x;
     int y;
     boolean cond;
+    int b;
+
+    b = 1;
     x = 99;
     cond = false;
     while (cond) {
-      x = x + 1;
+      x = x + b;
     }
-    y = x + 1;
+    y = x + b;
     System.out.println(y);
   }
 }
