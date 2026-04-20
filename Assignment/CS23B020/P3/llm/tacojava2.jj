@@ -1,0 +1,489 @@
+options {
+  JAVA_UNICODE_ESCAPE = true;
+}
+
+PARSER_BEGIN(TACoJavaParser)
+  public class TACoJavaParser {}
+PARSER_END(TACoJavaParser)
+
+SKIP : /* WHITE SPACE */
+{
+  " "
+| "\t"
+| "\n"
+| "\r"
+| "\f"
+}
+
+SPECIAL_TOKEN : /* COMMENTS */
+{
+  <SINGLE_LINE_COMMENT: "//" (~["\n","\r"])* ("\n"|"\r"|"\r\n")>
+| <FORMAL_COMMENT: "/**" (~["*"])* "*" ("*" | (~["*","/"] (~["*"])* "*"))* "/">
+| <MULTI_LINE_COMMENT: "/*" (~["*"])* "*" ("*" | (~["*","/"] (~["*"])* "*"))* "/">
+}
+
+TOKEN : 
+{
+  < LPAREN: "(" >
+| < RPAREN: ")" >
+| < LSQPAREN: "[" >
+| < RSQPAREN: "]" >
+| < LBRACE: "{" >
+| < RBRACE: "}" >
+| < SEMICOLON: ";" >
+| < DOT: "." >
+| < ASSIGN: "=" >
+| < LT: "<" >
+| < PLUS: "+" >
+| < MINUS: "-" >
+| < NOT : "!" >   
+| < BOOLEAN: "boolean" >   
+| < CLASS: "class" >
+| < INTERFACE: "interface" >
+| < ELSE: "else" >
+| < EXTENDS: "extends" >
+| < FALSE: "false" >
+| < IF: "if" >
+| < WHILE: "while" >
+| < FOR: "for" >
+| < INTEGER: "int" >   
+| < LENGTH: "length" >
+| < MAIN: "main" >
+| < NEW: "new" >
+| < PUBLIC: "public" >
+| < RETURN: "return" >
+| < STATIC: "static" >
+| < STRING: "String" >
+| < THIS: "this" >
+| < TRUE: "true" >
+| < PRINT: "System.out.println" >
+| < VOID: "void" >         
+}
+
+TOKEN : /* LITERALS */
+{
+  < INTEGER_LITERAL: ( ["1"-"9"] (["0"-"9"])* | "0" ) >
+}
+
+TOKEN : /* IDENTIFIERS */
+{
+  < IDENTIFIER: <LETTER> (<LETTER>|<DIGIT>)* >
+|
+  < #LETTER:
+      [
+       "\u0024",
+       "\u0041"-"\u005a",
+       "\u005f",
+       "\u0061"-"\u007a",
+       "\u00c0"-"\u00d6",
+       "\u00d8"-"\u00f6",
+       "\u00f8"-"\u00ff",
+       "\u0100"-"\u1fff",
+       "\u3040"-"\u318f",
+       "\u3300"-"\u337f",
+       "\u3400"-"\u3d2d",
+       "\u4e00"-"\u9fff",
+       "\uf900"-"\ufaff"
+      ]
+  >
+|
+  < #DIGIT:
+      [
+       "\u0030"-"\u0039",
+       "\u0660"-"\u0669",
+       "\u06f0"-"\u06f9",
+       "\u0966"-"\u096f",
+       "\u09e6"-"\u09ef",
+       "\u0a66"-"\u0a6f",
+       "\u0ae6"-"\u0aef",
+       "\u0b66"-"\u0b6f",
+       "\u0be7"-"\u0bef",
+       "\u0c66"-"\u0c6f",
+       "\u0ce6"-"\u0cef",
+       "\u0d66"-"\u0d6f",
+       "\u0e50"-"\u0e59",
+       "\u0ed0"-"\u0ed9",
+       "\u1040"-"\u1049"
+      ]
+  >
+}
+
+
+/************************************
+ * The TACoJava2 Grammar Starts Here *
+ ************************************/
+
+
+void Goal() :
+{}
+{
+  MainClass()
+  ( TypeDeclaration() )*
+  <EOF>
+}
+
+void MainClass() :
+{}
+{
+  "class" Identifier() "{"
+    "public" "static" "void" "main" "(" "String" "[" "]" Identifier() ")"   
+    "{" 
+    ( LOOKAHEAD(VarDeclaration()) VarDeclaration() )* 
+      ( Statement() )*
+     "}"
+  "}"
+}
+
+void TypeDeclaration() :  
+{}
+{ 
+  LOOKAHEAD(3)
+  ClassDeclaration()
+|
+  ClassExtendsDeclaration()
+}
+
+void ClassDeclaration() :
+{}
+{
+  "class" Identifier() "{" ( VarDeclaration() )* 
+                           ( MethodDeclaration() )* 
+                       "}"
+}
+
+void ClassExtendsDeclaration() :
+{}
+{
+  "class" Identifier() "extends" Identifier()
+                       "{" ( VarDeclaration() )* 
+                           ( MethodDeclaration() )* 
+                       "}"
+}
+
+void VarDeclaration() :  
+{}
+{ 
+  Type() Identifier() ";"      
+}
+
+void MethodDeclaration() :  
+{}
+{
+  "public" Type() Identifier() 
+  "(" ( FormalParameterList() )? ")"   
+  "{" ( LOOKAHEAD(2) VarDeclaration() )* 
+      ( Statement() )* "return" ConstOrId() ";" "}"
+}
+
+void FormalParameterList() :
+{}
+{
+  FormalParameter() ( FormalParameterRest() )*
+}
+
+void FormalParameter() :
+{}
+{
+  Type() Identifier()
+}
+
+void FormalParameterRest() :
+{}
+{
+  "," FormalParameter()
+}
+
+void Type() :
+{}
+{
+  LOOKAHEAD(3)
+  ArrayType()
+|
+  BooleanType()
+|
+  IntegerType()
+|
+  Identifier()     
+}
+
+void ArrayType() :
+{}
+{
+  "int" "[" "]"
+}
+
+void BooleanType() :
+{}
+{
+  "boolean"
+}
+
+void IntegerType() :
+{}
+{
+  "int"
+}
+
+void Statement() :
+{}
+{
+  Block()
+| 
+  LOOKAHEAD(AssignmentStatement())
+  AssignmentStatement()
+|
+  LOOKAHEAD(ArrayAssignmentStatement())
+  ArrayAssignmentStatement()
+|
+  LOOKAHEAD(FieldAssignmentStatement())
+  FieldAssignmentStatement()
+|
+  LOOKAHEAD(VoidMessageSendStatement())
+  VoidMessageSendStatement()
+|
+  IfStatement()
+|
+  WhileStatement()
+|
+  ForStatement()
+|
+  PrintStatement()
+}
+
+void Block() :
+{}
+{
+  "{" ( Statement() )* "}"
+}
+
+void AssignmentStatement() :
+{}
+{
+  Identifier() "=" Expression() ";"
+}
+void VoidMessageSendStatement() :
+{}
+{
+  MessageSend() ";"
+}
+void ArrayAssignmentStatement() :
+{}
+{
+  Identifier() "[" ConstOrId() "]" "=" ConstOrId() ";"
+}
+
+void FieldAssignmentStatement() :
+{}
+{
+  Identifier() "." Identifier()  "=" ConstOrId() ";"
+}
+
+void IfStatement() :
+{}
+{
+  "if" "(" Identifier() ")" Statement() "else" Statement() 
+}
+
+void WhileStatement() :
+{}
+{
+  "while" "(" Identifier() ")" Statement() 
+}
+
+void ForStatement() :
+{}
+{
+  "for" "(" Identifier() "=" Expression() ";" Expression() ";" Identifier() "=" Expression() ")" Statement() 
+}
+void PrintStatement() :
+{}
+{
+  "System.out.println" "(" ConstOrId() ")" ";"
+}
+
+void Expression() :
+{}
+{
+  LOOKAHEAD( ConstOrId() "<" )
+  CompareExpression()
+|
+  LOOKAHEAD( ConstOrId() "+" )
+  PlusExpression()
+|
+  LOOKAHEAD( ConstOrId() "-" )
+  MinusExpression()
+|
+  LOOKAHEAD( ConstOrId() "*" )
+  TimesExpression()
+|
+  LOOKAHEAD( Identifier() "[" )
+  ArrayLookup()
+|
+  LOOKAHEAD( Identifier() "." "length" )
+  ArrayLength()
+|
+  LOOKAHEAD( MessageSend() )
+  MessageSend()
+| 
+  LOOKAHEAD( FieldRead() )
+  FieldRead()
+| 
+  PrimaryExpression()
+}
+
+void CompareExpression() :
+{} 
+{
+  ConstOrId() "<" ConstOrId()
+}
+
+void PlusExpression() :
+{}
+{
+  ConstOrId() "+" ConstOrId()
+}
+
+void MinusExpression() :
+{}
+{
+  ConstOrId() "-" ConstOrId()
+}
+
+void TimesExpression() :
+{}
+{
+  ConstOrId() "*" ConstOrId()
+}
+
+void ArrayLookup() :
+{}
+{
+  Identifier() "[" ConstOrId() "]"
+}
+
+void ArrayLength() :
+{}
+{
+  Identifier() "." "length"
+}
+void FieldRead() :
+{}
+{
+  Identifier() "." Identifier()
+}
+void MessageSend() :
+{}
+{
+  PrimaryExpression() "." Identifier() 
+  "(" ( ArgList() )? ")"
+}
+
+void ArgList() :
+{}
+{
+  ConstOrId() ( ArgRest() )*
+}
+
+void ArgRest() :
+{}
+{
+  "," ConstOrId()
+}
+
+void PrimaryExpression() :
+{}
+{
+  IntegerLiteral()
+|
+  TrueLiteral()
+|
+  FalseLiteral()
+|
+  Identifier()
+|
+  ThisExpression()
+|
+  LOOKAHEAD(3)
+  ArrayAllocationExpression()
+|
+  AllocationExpression()
+|   
+  NotExpression()
+}
+
+void IntegerLiteral() :
+{}
+{
+  IntegerLiteralWithPosSign() 
+| 
+  IntegerLiteralWithNegSign() 
+| 
+  PlainIntegerLiteral()
+}
+void PlainIntegerLiteral() :
+{}
+{
+  <INTEGER_LITERAL>
+}
+void IntegerLiteralWithPosSign() :
+{}
+{
+"+"
+  <INTEGER_LITERAL>
+}
+void IntegerLiteralWithNegSign() :
+{}
+{
+"-"
+  <INTEGER_LITERAL>
+}
+
+void ConstOrId() :
+{}
+{
+	IntegerLiteral() | Identifier() | TrueLiteral() | FalseLiteral()
+}
+
+void TrueLiteral() :
+{}
+{
+  "true"
+}
+
+void FalseLiteral() :
+{}
+{
+  "false"
+}
+
+void Identifier() :
+{}
+{
+  <IDENTIFIER>
+}
+
+void ThisExpression() :
+{}
+{
+  "this"
+}
+
+void ArrayAllocationExpression() :
+{}
+{
+  "new" "int" "[" ConstOrId() "]"
+}
+
+void AllocationExpression() :
+{}
+{
+  "new" Identifier() "(" ")"
+}
+
+void NotExpression() :
+{}
+{
+  "!" Identifier() 
+}
+
+
