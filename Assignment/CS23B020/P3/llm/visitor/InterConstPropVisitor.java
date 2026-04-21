@@ -125,7 +125,7 @@ public class InterConstPropVisitor {
 
         // result is post-order: callees come AFTER callers in DFS post-order.
         // We want callees FIRST, so reverse it.
-        // Collections.reverse(result);DEBUG
+        // Collections.reverse(result);
         topoOrder = result;
     }
 
@@ -143,21 +143,28 @@ public class InterConstPropVisitor {
     // ---------------------------------------------------------------
 
     private void collectAndInjectArguments() {
-        // Fresh accumulators for this iteration
         Map<String, Map<String, CPValue>> newSummaries = new LinkedHashMap<>();
 
         for (Map.Entry<String, List<MessageSend>> entry : callSiteIndex.entrySet()) {
             String[] callerParts = entry.getKey().split("::");
-            String callerCls = callerParts[0];
-            String callerMeth = callerParts[1];
+            String callerCls = callerParts[0], callerMeth = callerParts[1];
+            List<MessageSend> calls = entry.getValue();
+            if (calls.isEmpty())
+                continue;
 
-            for (MessageSend ms : entry.getValue()) {
+            // KEY FIX: get arg values at the exact point each call executes,
+            // not from the final post-fixpoint state
+            Map<MessageSend, List<CPValue>> argValuesAtSite = cpv.collectCallSiteArgValues(callerCls, callerMeth,
+                    calls);
+
+            for (MessageSend ms : calls) {
                 String calledMethod = ms.f2.f0.tokenImage;
                 String receiverType = resolveReceiverType(ms, callerCls, callerMeth);
                 if (receiverType == null)
                     continue;
 
-                List<CPValue> argVals = evaluateArgs(ms, callerCls, callerMeth);
+                List<CPValue> argVals = argValuesAtSite.getOrDefault(
+                        ms, Collections.emptyList());
 
                 Set<String> candidates = new LinkedHashSet<>();
                 candidates.add(receiverType);
@@ -167,17 +174,13 @@ public class InterConstPropVisitor {
                     String declaringCls = ch.declaringClass(candidate, calledMethod);
                     if (declaringCls == null || !cg.reachable(declaringCls, calledMethod))
                         continue;
-
                     List<String> params = st.paramsOf(declaringCls, calledMethod);
                     String summaryKey = declaringCls + "::" + calledMethod;
                     Map<String, CPValue> summary = newSummaries.computeIfAbsent(
                             summaryKey, k -> new LinkedHashMap<>());
-
                     for (int i = 0; i < Math.min(params.size(), argVals.size()); i++) {
-                        String param = params.get(i);
-                        CPValue argVal = argVals.get(i);
-                        CPValue existing = summary.getOrDefault(param, CPValue.UNDEF);
-                        summary.put(param, CPValue.meet(existing, argVal));
+                        CPValue existing = summary.getOrDefault(params.get(i), CPValue.UNDEF);
+                        summary.put(params.get(i), CPValue.meet(existing, argVals.get(i)));
                     }
                 }
             }
@@ -190,7 +193,6 @@ public class InterConstPropVisitor {
             List<String> params = st.paramsOf(cls, method);
             if (params.isEmpty())
                 continue;
-
             Map<String, CPValue> summary = newSummaries.get(key);
             for (String param : params) {
                 CPValue val = (summary == null || !summary.containsKey(param))
@@ -207,20 +209,20 @@ public class InterConstPropVisitor {
     // Evaluate argument identifiers from caller's current CP state
     // ---------------------------------------------------------------
 
-    private List<CPValue> evaluateArgs(MessageSend ms,
-            String callerCls, String callerMeth) {
-        List<CPValue> vals = new ArrayList<>();
-        if (!ms.f4.present())
-            return vals;
-        ArgList al = (ArgList) ms.f4.node;
-        vals.add(cpv.lookupVarInMethod(callerCls, callerMeth, al.f0.f0.tokenImage));
-        if (al.f1.present())
-            for (Enumeration<Node> e = al.f1.elements(); e.hasMoreElements();) {
-                ArgRest ar = (ArgRest) e.nextElement();
-                vals.add(cpv.lookupVarInMethod(callerCls, callerMeth, ar.f1.f0.tokenImage));
-            }
-        return vals;
-    }
+    // private List<CPValue> evaluateArgs(MessageSend ms,
+    // String callerCls, String callerMeth) {
+    // List<CPValue> vals = new ArrayList<>();
+    // if (!ms.f4.present())
+    // return vals;
+    // ArgList al = (ArgList) ms.f4.node;
+    // vals.add(cpv.lookupVarInMethod(callerCls, callerMeth, al.f0.f0.tokenImage));
+    // if (al.f1.present())
+    // for (Enumeration<Node> e = al.f1.elements(); e.hasMoreElements();) {
+    // ArgRest ar = (ArgRest) e.nextElement();
+    // vals.add(cpv.lookupVarInMethod(callerCls, callerMeth, ar.f1.f0.tokenImage));
+    // }
+    // return vals;
+    // }
 
     // ---------------------------------------------------------------
     // Receiver type resolution

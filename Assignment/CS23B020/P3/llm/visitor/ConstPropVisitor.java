@@ -168,6 +168,109 @@ public class ConstPropVisitor extends GJDepthFirst {
         return !methodStates.equals(snapshot);
     }
 
+    // Add this public method to ConstPropVisitor, after lookupVarInMethod()
+
+    public Map<MessageSend, List<CPValue>> collectCallSiteArgValues(
+            String cls, String method, List<MessageSend> callSites) {
+
+        if (callSites.isEmpty())
+            return Collections.emptyMap();
+
+        currentClass = cls;
+        currentMethod = method;
+        state = new LinkedHashMap<>();
+
+        NodeListOptional stmts;
+        if ("main".equals(method)) {
+            if (mainClassNode == null) {
+                cleanup();
+                return Collections.emptyMap();
+            }
+            for (String local : st.localsOf(cls, method).keySet())
+                state.put(local, CPValue.UNDEF);
+            stmts = mainClassNode.f15;
+        } else {
+            MethodDeclaration md = lookupMethod(cls, method);
+            if (md == null) {
+                cleanup();
+                return Collections.emptyMap();
+            }
+            for (String param : st.paramsOf(cls, method))
+                state.put(param, getParamSummary(cls, method, param));
+            for (String local : st.localsOf(cls, method).keySet())
+                if (!state.containsKey(local))
+                    state.put(local, CPValue.UNDEF);
+            stmts = md.f8;
+        }
+
+        // Identity set so we match exact AST nodes
+        Set<MessageSend> targets = Collections.newSetFromMap(
+                new java.util.IdentityHashMap<>());
+        targets.addAll(callSites);
+
+        Map<MessageSend, List<CPValue>> result = new java.util.IdentityHashMap<>();
+
+        if (stmts.present()) {
+            for (Enumeration<Node> e = stmts.elements(); e.hasMoreElements();) {
+                Node raw = e.nextElement();
+                Node inner = (raw instanceof Statement)
+                        ? ((Statement) raw).f0.choice
+                        : raw;
+
+                if (inner instanceof AssignmentStatement) {
+                    AssignmentStatement as = (AssignmentStatement) inner;
+                    // Check if RHS contains a call we're tracking
+                    MessageSend ms = extractMessageSend(as.f2);
+                    if (ms != null && targets.contains(ms)) {
+                        // Capture args BEFORE the assignment overwrites the LHS
+                        result.put(ms, captureArgs(ms));
+                    }
+                    // Execute the assignment to advance state
+                    String lhs = as.f0.f0.tokenImage;
+                    if (!isField(lhs))
+                        state.put(lhs, evalExpression(as.f2));
+                } else {
+                    raw.accept(this, null);
+                }
+            }
+        }
+
+        cleanup();
+        return result;
+    }
+
+    private MessageSend extractMessageSend(Expression expr) {
+        Node choice = expr.f0.choice;
+        if (choice instanceof MessageSend)
+            return (MessageSend) choice;
+        if (choice instanceof PrimaryExpression) {
+            Node inner = ((PrimaryExpression) choice).f0.choice;
+            if (inner instanceof MessageSend)
+                return (MessageSend) inner;
+        }
+        return null;
+    }
+
+    private List<CPValue> captureArgs(MessageSend ms) {
+        List<CPValue> vals = new ArrayList<>();
+        if (!ms.f4.present())
+            return vals;
+        ArgList al = (ArgList) ms.f4.node;
+        vals.add(lookupVar(al.f0.f0.tokenImage));
+        if (al.f1.present())
+            for (Enumeration<Node> e = al.f1.elements(); e.hasMoreElements();) {
+                ArgRest ar = (ArgRest) e.nextElement();
+                vals.add(lookupVar(ar.f1.f0.tokenImage));
+            }
+        return vals;
+    }
+
+    private void cleanup() {
+        currentClass = null;
+        currentMethod = null;
+        state = null;
+    }
+
     public CPValue lookupVarInMethod(String cls, String method, String name) {
         return getIdValue(cls, method, name);
     }
@@ -447,6 +550,8 @@ public class ConstPropVisitor extends GJDepthFirst {
             CPValue v = lookupVar(((NotExpression) choice).f1.f0.tokenImage);
             return v.isBool() ? CPValue.ofBool(!v.boolValue()) : CPValue.NAC;
         }
+        if (choice instanceof MessageSend)
+            return evalMessageSend((MessageSend) choice);
         return CPValue.NAC;
     }
 
