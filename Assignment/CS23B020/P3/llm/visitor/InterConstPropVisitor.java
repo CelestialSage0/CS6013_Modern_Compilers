@@ -6,27 +6,18 @@ import java.util.*;
 /**
  * Interprocedural Constant Propagation (context-insensitive).
  *
+ * KEY FIX: analyses methods in reverse-call order (callees before callers)
+ * so that when main is analysed, live's return value is already in
+ * methodStates. This ensures evalMessageSend folds correctly in a single
+ * reAnalyse pass.
+ *
  * Algorithm:
- * For each parameter of each reachable method, compute the MEET of
- * the CP values of all arguments passed at every call site that targets
- * that method (via CHA). Inject the result into ConstPropVisitor as the
- * parameter's initial value (instead of NAC). Re-run CP. Repeat until
- * no method state changes.
- *
- * Context-insensitivity: one summary per (class, method, param) — we do
- * NOT distinguish different call sites. If foo is called with 2 at one
- * site and 3 at another, param gets NAC.
- *
- * CHA conservatism: if a method is a CHA target (reachable via any
- * subclass override), ALL overriding methods are targets too. We meet
- * across all of them — an override whose param is NAC makes the shared
- * summary NAC for that position.
- *
- * Argument value source: after each CP run, we read argument values from
- * the CALLER's final CP state. A literal argument (new Foo(), true, 3...)
- * is evaluated directly.
- *
- * Usage: call run(goal) once, then use cpv for subsequent passes.
+ * 1. Build call-site index (once).
+ * 2. Compute topological order of methods (callees first).
+ * 3. Loop:
+ * a. Collect argument CPValues at every call site -> meet into param summaries.
+ * b. Re-analyse all methods IN TOPOLOGICAL ORDER with updated summaries.
+ * c. Repeat until no state changes.
  */
 public class InterConstPropVisitor {
 
@@ -35,19 +26,12 @@ public class InterConstPropVisitor {
     private final CallGraph cg;
     private final ConstPropVisitor cpv;
 
-    // ---------------------------------------------------------------
-    // Call-site index: for each (callee class, callee method, param index)
-    // we accumulate the meet of all argument CPValues seen across all
-    // call sites (in all reachable callers).
-    // ---------------------------------------------------------------
-
-    // "callerCls::callerMethod" -> list of MessageSend nodes in that method
-    // (built once from the reachable set)
+    // callerKey -> list of MessageSend nodes in that method
     private final Map<String, List<MessageSend>> callSiteIndex = new LinkedHashMap<>();
 
-    // ---------------------------------------------------------------
-    // Constructor
-    // ---------------------------------------------------------------
+    // Topological order: callees before callers
+    private List<String> topoOrder = new ArrayList<>();
+
     public InterConstPropVisitor(ClassHierarchy ch,
             SymbolTable st,
             CallGraph cg,
@@ -62,26 +46,19 @@ public class InterConstPropVisitor {
     // Main entry point
     // ---------------------------------------------------------------
 
-    /**
-     * Run interprocedural CP to fixpoint.
-     * After this returns, cpv holds the fully refined per-method states.
-     */
     public void run(Goal goal) {
-        // Step 1: build the call-site index (done once — AST doesn't change)
         buildCallSiteIndex(goal);
+        buildTopoOrder();
 
-        // Step 2: iterate until no CP state changes
         boolean changed = true;
         while (changed) {
-            // Collect argument values at every call site using current CP state
             collectAndInjectArguments();
-            // Re-run intraprocedural CP with updated param summaries
-            changed = cpv.reAnalyse();
+            changed = cpv.reAnalyseInOrder(topoOrder);
         }
     }
 
     // ---------------------------------------------------------------
-    // Step 1: collect all MessageSend nodes per reachable caller method
+    // Build call-site index: one list of MessageSend per reachable method
     // ---------------------------------------------------------------
 
     private void buildCallSiteIndex(Goal goal) {
@@ -96,35 +73,77 @@ public class InterConstPropVisitor {
             if ("main".equals(method) && mainNode != null) {
                 mainNode.f15.accept(collector, calls);
             } else {
-                Map<String, MethodDeclaration> mmap = cpv.methodIndex().get(cls);
-                if (mmap != null) {
-                    MethodDeclaration md = mmap.get(method);
-                    // Walk up hierarchy if not found directly
-                    if (md == null) {
-                        String cur = ch.parentOf(cls);
-                        while (cur != null && md == null) {
-                            Map<String, MethodDeclaration> pm = cpv.methodIndex().get(cur);
-                            if (pm != null)
-                                md = pm.get(method);
-                            cur = ch.parentOf(cur);
-                        }
-                    }
-                    if (md != null)
-                        md.f8.accept(collector, calls);
-                }
+                MethodDeclaration md = lookupMD(cls, method);
+                if (md != null)
+                    md.f8.accept(collector, calls);
             }
             callSiteIndex.put(key, calls);
         }
     }
 
     // ---------------------------------------------------------------
-    // Step 2: for each call site, resolve targets via CHA, evaluate
-    // arguments from caller's CP state, meet into param summaries
+    // Topological sort: callees appear before callers in the list.
+    //
+    // We reverse-DFS the call graph: start from leaves (methods that
+    // call nothing), work up to callers. Cycles (mutual recursion) are
+    // broken by the existing meet-based fixpoint — we just pick any order.
+    // ---------------------------------------------------------------
+
+    private void buildTopoOrder() {
+        // Build adjacency: caller -> set of callees (reachable keys)
+        Map<String, Set<String>> callees = new LinkedHashMap<>();
+        for (String callerKey : cg.reachableSet()) {
+            Set<String> targets = new LinkedHashSet<>();
+            List<MessageSend> calls = callSiteIndex.getOrDefault(
+                    callerKey, Collections.emptyList());
+            String[] cp2 = callerKey.split("::");
+            String callerCls = cp2[0], callerMeth = cp2[1];
+
+            for (MessageSend ms : calls) {
+                String methodName = ms.f2.f0.tokenImage;
+                String receiverType = resolveReceiverType(ms, callerCls, callerMeth);
+                if (receiverType == null)
+                    continue;
+
+                Set<String> candidates = new LinkedHashSet<>();
+                candidates.add(receiverType);
+                candidates.addAll(ch.allSubclasses(receiverType));
+                for (String candidate : candidates) {
+                    String dc = ch.declaringClass(candidate, methodName);
+                    if (dc != null && cg.reachable(dc, methodName))
+                        targets.add(dc + "::" + methodName);
+                }
+            }
+            callees.put(callerKey, targets);
+        }
+
+        // Post-order DFS (callees visited before callers in result)
+        Set<String> visited = new LinkedHashSet<>();
+        List<String> result = new ArrayList<>();
+        for (String key : cg.reachableSet())
+            dfs(key, callees, visited, result);
+
+        // result is post-order: callees come AFTER callers in DFS post-order.
+        // We want callees FIRST, so reverse it.
+        // Collections.reverse(result);DEBUG
+        topoOrder = result;
+    }
+
+    private void dfs(String key, Map<String, Set<String>> callees,
+            Set<String> visited, List<String> result) {
+        if (!visited.add(key))
+            return;
+        for (String callee : callees.getOrDefault(key, Collections.emptySet()))
+            dfs(callee, callees, visited, result);
+        result.add(key);
+    }
+
+    // ---------------------------------------------------------------
+    // Collect argument values from call sites -> inject into param summaries
     // ---------------------------------------------------------------
 
     private void collectAndInjectArguments() {
-        // Accumulator: "calleeCls::calleeMethod" -> paramName -> meet-of-args
-        // We rebuild from scratch each iteration (CP state has changed)
+        // Fresh accumulators for this iteration
         Map<String, Map<String, CPValue>> newSummaries = new LinkedHashMap<>();
 
         for (Map.Entry<String, List<MessageSend>> entry : callSiteIndex.entrySet()) {
@@ -134,51 +153,37 @@ public class InterConstPropVisitor {
 
             for (MessageSend ms : entry.getValue()) {
                 String calledMethod = ms.f2.f0.tokenImage;
-
-                // Resolve receiver type for CHA
                 String receiverType = resolveReceiverType(ms, callerCls, callerMeth);
                 if (receiverType == null)
                     continue;
 
-                // CHA: all candidate targets
+                List<CPValue> argVals = evaluateArgs(ms, callerCls, callerMeth);
+
                 Set<String> candidates = new LinkedHashSet<>();
                 candidates.add(receiverType);
                 candidates.addAll(ch.allSubclasses(receiverType));
 
-                // Evaluate argument CPValues from caller's current CP state
-                List<CPValue> argVals = evaluateArgs(ms, callerCls, callerMeth);
-
-                // For each CHA target, meet argVals into that target's summary
                 for (String candidate : candidates) {
                     String declaringCls = ch.declaringClass(candidate, calledMethod);
-                    if (declaringCls == null)
-                        continue;
-                    if (!cg.reachable(declaringCls, calledMethod))
+                    if (declaringCls == null || !cg.reachable(declaringCls, calledMethod))
                         continue;
 
                     List<String> params = st.paramsOf(declaringCls, calledMethod);
                     String summaryKey = declaringCls + "::" + calledMethod;
-
                     Map<String, CPValue> summary = newSummaries.computeIfAbsent(
                             summaryKey, k -> new LinkedHashMap<>());
 
                     for (int i = 0; i < Math.min(params.size(), argVals.size()); i++) {
-                        String paramName = params.get(i);
+                        String param = params.get(i);
                         CPValue argVal = argVals.get(i);
-                        // Meet: if this param was seen before, meet with new value
-                        CPValue existing = summary.getOrDefault(paramName, CPValue.UNDEF);
-                        summary.put(paramName, CPValue.meet(existing, argVal));
+                        CPValue existing = summary.getOrDefault(param, CPValue.UNDEF);
+                        summary.put(param, CPValue.meet(existing, argVal));
                     }
                 }
             }
         }
 
-        // Any reachable method that has NO call sites targeting it gets NAC
-        // for all params (conservative — could be called from outside).
-        // We detect this by checking if a key appears in newSummaries.
-        // If a (cls, method) has parameters but no summary entry -> NAC for all.
-
-        // Inject final summaries into cpv
+        // Inject: methods with no observed call sites get NAC for all params
         for (String key : cg.reachableSet()) {
             String[] p = key.split("::");
             String cls = p[0], method = p[1];
@@ -187,84 +192,62 @@ public class InterConstPropVisitor {
                 continue;
 
             Map<String, CPValue> summary = newSummaries.get(key);
-
             for (String param : params) {
-                CPValue val;
-                if (summary == null || !summary.containsKey(param)) {
-                    // No call site provided this argument -> NAC (unknown callers)
+                CPValue val = (summary == null || !summary.containsKey(param))
+                        ? CPValue.NAC
+                        : summary.get(param);
+                if (val.isUndef())
                     val = CPValue.NAC;
-                } else {
-                    val = summary.get(param);
-                    // UNDEF means no call site was seen at all -> NAC (conservative)
-                    if (val.isUndef())
-                        val = CPValue.NAC;
-                }
                 cpv.setParamSummary(cls, method, param, val);
             }
         }
     }
 
     // ---------------------------------------------------------------
-    // Evaluate the argument list of a MessageSend using the caller's
-    // current CP state.
-    //
-    // In TACoJava, ArgList is: Identifier ( "," Identifier )*
-    // Arguments are always identifiers (not nested expressions).
-    // We look up each identifier's CPValue in the caller's state.
+    // Evaluate argument identifiers from caller's current CP state
     // ---------------------------------------------------------------
 
     private List<CPValue> evaluateArgs(MessageSend ms,
-            String callerCls,
-            String callerMeth) {
+            String callerCls, String callerMeth) {
         List<CPValue> vals = new ArrayList<>();
         if (!ms.f4.present())
             return vals;
-
         ArgList al = (ArgList) ms.f4.node;
-        // First argument
-        vals.add(lookupArgValue(al.f0.f0.tokenImage, callerCls, callerMeth));
-        // Remaining arguments
-        if (al.f1.present()) {
+        vals.add(cpv.lookupVarInMethod(callerCls, callerMeth, al.f0.f0.tokenImage));
+        if (al.f1.present())
             for (Enumeration<Node> e = al.f1.elements(); e.hasMoreElements();) {
                 ArgRest ar = (ArgRest) e.nextElement();
-                vals.add(lookupArgValue(ar.f1.f0.tokenImage, callerCls, callerMeth));
+                vals.add(cpv.lookupVarInMethod(callerCls, callerMeth, ar.f1.f0.tokenImage));
             }
-        }
         return vals;
     }
 
-    /**
-     * Look up the CPValue of an argument identifier in the caller's state.
-     * Uses cpv.lookupVarInMethod which consults the caller's final CP state.
-     */
-    private CPValue lookupArgValue(String varName,
-            String callerCls,
-            String callerMeth) {
-        return cpv.lookupVarInMethod(callerCls, callerMeth, varName);
-    }
-
     // ---------------------------------------------------------------
-    // Resolve declared type of MessageSend receiver (same as CallGraphVisitor)
+    // Receiver type resolution
     // ---------------------------------------------------------------
 
-    private String resolveReceiverType(MessageSend ms,
-            String enclosingCls,
-            String enclosingMeth) {
+    private String resolveReceiverType(MessageSend ms, String cls, String method) {
         Node choice = ms.f0.f0.choice;
-        if (choice instanceof Identifier) {
-            return st.typeOf(enclosingCls, enclosingMeth,
-                    ((Identifier) choice).f0.tokenImage);
-        }
+        if (choice instanceof Identifier)
+            return st.typeOf(cls, method, ((Identifier) choice).f0.tokenImage);
         if (choice instanceof ThisExpression)
-            return enclosingCls;
+            return cls;
         if (choice instanceof AllocationExpression)
             return ((AllocationExpression) choice).f1.f0.tokenImage;
         return null;
     }
 
-    // ---------------------------------------------------------------
-    // Inner helper: collects MessageSend nodes from a subtree
-    // ---------------------------------------------------------------
+    private MethodDeclaration lookupMD(String cls, String method) {
+        String cur = cls;
+        while (cur != null) {
+            Map<String, MethodDeclaration> m = cpv.methodIndex().get(cur);
+            if (m != null && m.containsKey(method))
+                return m.get(method);
+            cur = ch.parentOf(cur);
+        }
+        return null;
+    }
+
     private static class MessageSendCollector extends GJDepthFirst {
         @SuppressWarnings("unchecked")
         @Override

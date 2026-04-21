@@ -62,11 +62,13 @@ public class ConstPropVisitor extends GJDepthFirst {
     public CPValue getIdValue(String cls, String method, String name) {
         String cur = cls;
         while (cur != null) {
-            if (st.fieldsOf(cur).containsKey(name))
+            if (st.fieldsOf(cur).containsKey(name)) {
                 return CPValue.NAC;
+            }
             cur = ch.parentOf(cur);
         }
-        return getVarValue(cls, method, name);
+        CPValue v = getVarValue(cls, method, name);
+        return v;
     }
 
     /**
@@ -150,6 +152,22 @@ public class ConstPropVisitor extends GJDepthFirst {
         return !methodStates.equals(old);
     }
 
+    /**
+     * Re-run analysis in a given order (e.g. topological: callees first).
+     * Analysing callees before callers means evalMessageSend can fold
+     * the callee's return value immediately in the same pass, so main
+     * sees live's CONST(7) return when it is analysed after live.
+     */
+    public boolean reAnalyseInOrder(List<String> orderedKeys) {
+        Map<String, Map<String, Map<String, CPValue>>> snapshot = deepCopy(methodStates);
+        methodStates.clear();
+        for (String key : orderedKeys) {
+            String[] p = key.split("::");
+            analyseMethod(p[0], p[1]);
+        }
+        return !methodStates.equals(snapshot);
+    }
+
     public CPValue lookupVarInMethod(String cls, String method, String name) {
         return getIdValue(cls, method, name);
     }
@@ -162,6 +180,8 @@ public class ConstPropVisitor extends GJDepthFirst {
     public Object visit(Goal n, Object argu) {
         n.f0.accept(this, "INDEX");
         n.f1.accept(this, "INDEX");
+        // Analyse in reachableSet order for the initial pass.
+        // InterConstPropVisitor will re-analyse in topological order.
         for (String key : cg.reachableSet()) {
             String[] p = key.split("::");
             analyseMethod(p[0], p[1]);

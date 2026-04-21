@@ -65,12 +65,13 @@ public class DeadCodeVisitor extends GJDepthFirst {
      * AND its return is a constant — the call is truly useless.
      * Promote to void call (return false) when the callee has side effects.
      */
-    public boolean dropMessageSendCall(AssignmentStatement as) {
+    public boolean dropMessageSendCall(AssignmentStatement as,
+            String callerCls, String callerMeth) {
         if (!(as.f2.f0.choice instanceof MessageSend))
             return false;
         MessageSend ms = (MessageSend) as.f2.f0.choice;
         String methodName = ms.f2.f0.tokenImage;
-        String receiverType = resolveReceiverType(ms);
+        String receiverType = resolveReceiverType(ms, callerCls, callerMeth);
         if (receiverType == null)
             return false;
 
@@ -444,9 +445,8 @@ public class DeadCodeVisitor extends GJDepthFirst {
             // Receiver: always live (object reference)
             Node recv = ms.f0.f0.choice;
             if (recv instanceof Identifier) {
-                // Only live if the callee is not dead (its return is substituted)
-                // but receiver object must still exist -> keep it live
-                String receiverType = resolveReceiverType(ms, cls, method);
+                // Only live if callee is not constant+pure (if it is, the whole
+                // call folds to a literal and the receiver object is not needed)
                 if (!isCalleeConstantAndPure(ms, cls, method))
                     uses.add(((Identifier) recv).f0.tokenImage);
             }
@@ -500,8 +500,10 @@ public class DeadCodeVisitor extends GJDepthFirst {
     }
 
     private void addIfLive(Set<String> liveSet, String varName, String cls, String method) {
-        if (!cp.getIdValue(cls, method, varName).isConst())
+        CPValue val = cp.getIdValue(cls, method, varName);
+        if (!val.isConst()) {
             liveSet.add(varName);
+        }
     }
 
     private boolean hasSideEffects(Expression expr) {
@@ -518,18 +520,6 @@ public class DeadCodeVisitor extends GJDepthFirst {
             return st.typeOf(cls, method, ((Identifier) choice).f0.tokenImage);
         if (choice instanceof ThisExpression)
             return cls;
-        if (choice instanceof AllocationExpression)
-            return ((AllocationExpression) choice).f1.f0.tokenImage;
-        return null;
-    }
-
-    /** Overload for use in dropMessageSendCall (no cls/method context). */
-    private String resolveReceiverType(MessageSend ms) {
-        // Without context we can't resolve Identifier receivers.
-        // dropMessageSendCall is called from CodeGen which has context —
-        // but we don't pass it. For now, AllocationExpression is the
-        // common case; others fall back to conservative (no drop).
-        Node choice = ms.f0.f0.choice;
         if (choice instanceof AllocationExpression)
             return ((AllocationExpression) choice).f1.f0.tokenImage;
         return null;

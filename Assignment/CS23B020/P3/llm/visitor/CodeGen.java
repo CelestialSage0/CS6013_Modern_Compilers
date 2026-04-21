@@ -297,7 +297,7 @@ public class CodeGen extends GJDepthFirst {
     private void emitAssignment(AssignmentStatement as) {
         if (dc.isDeadAssignment(as)) {
             if (as.f2.f0.choice instanceof MessageSend
-                    && !dc.dropMessageSendCall(as)) {
+                    && !dc.dropMessageSendCall(as, currentClass, currentMethod)) {
                 // Callee has side effects -> promote to void call statement
                 emit(ind());
                 emitMessageSend((MessageSend) as.f2.f0.choice);
