@@ -6,23 +6,22 @@ import java.util.*;
 /**
  * Pass 5: Liveness Analysis + Dead Code Marking.
  *
- * Three fixes over previous version:
+ * Extended method elimination rule:
  *
- * FIX 1: markDeadStatement now recurses into if/while/block bodies
- * so assignments inside nested structures are also marked dead.
+ * A reachable method foo can be eliminated when ALL of:
+ * (a) Its return value is a known constant (cp.getReturnValue is CONST)
+ * (b) It has no side effects (no println, no field writes)
+ * (c) Every call site x = obj.foo(...) has x dead after CP substitution
+ * (i.e. the assignment is already dead because x is substituted)
  *
- * FIX 2: Tracks "ever-live" variables — the union of all liveIn sets
- * across every program point in the method. A variable that is
- * never in any liveIn set is never read as a non-constant, so
- * its VarDeclaration can be dropped from the output.
- *
- * FIX 3: CP-aware liveness — identifiers that CP will substitute with
- * a constant are NOT counted as real uses (addIfLive).
+ * Condition (c) is guaranteed by the existing dead-assignment logic:
+ * if the call result is always a constant, then in the caller, x gets
+ * CONST from evalMessageSend, so x is substituted at every use, so x
+ * is never live as a real variable, so the assignment is dead.
+ * The void-promotion rule (dead assign with MessageSend RHS -> void call)
+ * is SUPPRESSED when the callee has no side effects — we just drop it.
  *
  * Dead-node sets are keyed on INNER concrete nodes (unwrapped from Statement).
- * getDeadBranch convention:
- * "else" -> else-branch dead (condition true -> keep then)
- * "then" -> then-branch dead (condition false -> keep else)
  */
 public class DeadCodeVisitor extends GJDepthFirst {
 
@@ -31,36 +30,19 @@ public class DeadCodeVisitor extends GJDepthFirst {
     private final CallGraph cg;
     private final ConstPropVisitor cp;
 
-    // ---------------------------------------------------------------
-    // Results — keyed on INNER concrete nodes
-    // ---------------------------------------------------------------
-    private final Set<Node> deadAssignments = Collections.newSetFromMap(
-            new IdentityHashMap<>());
+    // Results
+    private final Set<Node> deadAssignments = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<Node, String> deadIfBranch = new IdentityHashMap<>();
-    private final Set<Node> deadWhiles = Collections.newSetFromMap(
-            new IdentityHashMap<>());
+    private final Set<Node> deadWhiles = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<String> deadMethods = new LinkedHashSet<>();
-
-    /**
-     * Per-method set of variables that are EVER live at any program point.
-     * "cls::method" -> set of variable names that are truly needed.
-     * Variables NOT in this set can have their VarDeclaration dropped.
-     */
     private final Map<String, Set<String>> everLive = new LinkedHashMap<>();
 
-    // ---------------------------------------------------------------
     // Method AST index
-    // ---------------------------------------------------------------
     private final Map<String, Map<String, MethodDeclaration>> methodIndex = new LinkedHashMap<>();
     private MainClass mainClassNode;
 
-    // ---------------------------------------------------------------
-    // Constructor
-    // ---------------------------------------------------------------
-    public DeadCodeVisitor(ClassHierarchy ch,
-            SymbolTable st,
-            CallGraph cg,
-            ConstPropVisitor cp) {
+    public DeadCodeVisitor(ClassHierarchy ch, SymbolTable st,
+            CallGraph cg, ConstPropVisitor cp) {
         this.ch = ch;
         this.st = st;
         this.cg = cg;
@@ -73,6 +55,36 @@ public class DeadCodeVisitor extends GJDepthFirst {
 
     public boolean isDeadAssignment(AssignmentStatement n) {
         return deadAssignments.contains(n);
+    }
+
+    /**
+     * For dead-assignment whose RHS is a MessageSend:
+     * should we promote to a void call, or just drop it entirely?
+     *
+     * Drop entirely (return true) when the callee has no side effects
+     * AND its return is a constant — the call is truly useless.
+     * Promote to void call (return false) when the callee has side effects.
+     */
+    public boolean dropMessageSendCall(AssignmentStatement as) {
+        if (!(as.f2.f0.choice instanceof MessageSend))
+            return false;
+        MessageSend ms = (MessageSend) as.f2.f0.choice;
+        String methodName = ms.f2.f0.tokenImage;
+        String receiverType = resolveReceiverType(ms);
+        if (receiverType == null)
+            return false;
+
+        // Drop if ALL CHA targets have no side effects
+        Set<String> candidates = new LinkedHashSet<>();
+        candidates.add(receiverType);
+        candidates.addAll(ch.allSubclasses(receiverType));
+        for (String candidate : candidates) {
+            String dc2 = ch.declaringClass(candidate, methodName);
+            if (dc2 != null && cg.reachable(dc2, methodName))
+                if (cp.methodHasSideEffects(dc2, methodName))
+                    return false;
+        }
+        return true;
     }
 
     /** "else"=keep then, "then"=keep else, null=both live. */
@@ -88,11 +100,6 @@ public class DeadCodeVisitor extends GJDepthFirst {
         return deadMethods.contains(cls + "::" + method);
     }
 
-    /**
-     * Should the VarDeclaration for varName in (cls, method) be dropped?
-     * True iff the variable is never live at any program point
-     * (i.e., it is always substituted by a constant or never used).
-     */
     public boolean isDeadVarDecl(String cls, String method, String varName) {
         Set<String> live = everLive.get(cls + "::" + method);
         return live == null || !live.contains(varName);
@@ -150,18 +157,34 @@ public class DeadCodeVisitor extends GJDepthFirst {
     }
 
     // ---------------------------------------------------------------
-    // Phase 2: dead methods
+    // Phase 2: mark dead methods
+    //
+    // A method is dead if:
+    // (A) Not reachable from CHA call graph, OR
+    // (B) Reachable, but return is always a constant AND no side effects
+    // (every call site's result will be CP-substituted, so the call
+    // itself becomes a dead side-effect-free assignment and is dropped)
     // ---------------------------------------------------------------
 
     private void markDeadMethods() {
-        for (String cls : ch.classNames())
-            for (String m : ch.methodsOf(cls))
-                if (!cg.reachable(cls, m))
-                    deadMethods.add(cls + "::" + m);
+        for (String cls : ch.classNames()) {
+            for (String method : ch.methodsOf(cls)) {
+                if (!cg.reachable(cls, method)) {
+                    // (A) Not reachable at all
+                    deadMethods.add(cls + "::" + method);
+                } else {
+                    // (B) Reachable but purely constant return + no side effects
+                    CPValue retVal = cp.getReturnValue(cls, method);
+                    if (retVal.isConst() && !cp.methodHasSideEffects(cls, method)) {
+                        deadMethods.add(cls + "::" + method);
+                    }
+                }
+            }
+        }
     }
 
     // ---------------------------------------------------------------
-    // Phase 3: per-method backward liveness + marking
+    // Phase 3: per-method liveness + marking
     // ---------------------------------------------------------------
 
     private void analyseMethod(String cls, String method) {
@@ -177,7 +200,6 @@ public class DeadCodeVisitor extends GJDepthFirst {
         for (int i = 0; i < n; i++)
             liveOut[i] = new LinkedHashSet<>();
 
-        // Exit live: return variable (skipped if CP substitutes it)
         Set<String> exitLive = new LinkedHashSet<>();
         if (!"main".equals(method)) {
             MethodDeclaration md = lookupMethod(cls, method);
@@ -185,7 +207,6 @@ public class DeadCodeVisitor extends GJDepthFirst {
                 addIfLive(exitLive, md.f10.f0.tokenImage, cls, method);
         }
 
-        // Backward fixpoint over the flat statement list
         boolean changed = true;
         while (changed) {
             changed = false;
@@ -199,22 +220,19 @@ public class DeadCodeVisitor extends GJDepthFirst {
             }
         }
 
-        // Accumulate ever-live: union of all liveOut sets + liveIn of stmt[0]
         Set<String> ever = new LinkedHashSet<>(exitLive);
         for (int i = 0; i < n; i++)
             ever.addAll(liveOut[i]);
-        // Also include liveIn of the first statement (= variables live on entry)
         if (n > 0)
             ever.addAll(liveIn(unwrap(stmts.get(0)), liveOut[0], cls, method));
         everLive.put(cls + "::" + method, ever);
 
-        // Mark dead statements — recursively into nested bodies
         for (int i = 0; i < n; i++)
             markDeadStatementRecursive(unwrap(stmts.get(i)), liveOut[i], cls, method);
     }
 
     // ---------------------------------------------------------------
-    // Transfer function: liveIn = (liveOut - defs) ∪ effectiveUses
+    // Transfer function
     // ---------------------------------------------------------------
 
     private Set<String> liveIn(Node inner, Set<String> liveOut,
@@ -244,30 +262,23 @@ public class DeadCodeVisitor extends GJDepthFirst {
             IfStatement is = (IfStatement) inner;
             String condName = is.f2.f0.tokenImage;
             CPValue condVal = cp.getVarValue(cls, method, condName);
-
             if (condVal.isTrue()) {
                 live = liveIn(unwrap(is.f4), new LinkedHashSet<>(liveOut), cls, method);
             } else if (condVal.isFalse()) {
                 live = liveIn(unwrap(is.f6), new LinkedHashSet<>(liveOut), cls, method);
             } else {
-                Set<String> thenLive = liveIn(unwrap(is.f4),
-                        new LinkedHashSet<>(liveOut), cls, method);
-                Set<String> elseLive = liveIn(unwrap(is.f6),
-                        new LinkedHashSet<>(liveOut), cls, method);
-                live = union(thenLive, elseLive);
+                live = union(
+                        liveIn(unwrap(is.f4), new LinkedHashSet<>(liveOut), cls, method),
+                        liveIn(unwrap(is.f6), new LinkedHashSet<>(liveOut), cls, method));
                 addIfLive(live, condName, cls, method);
             }
 
         } else if (inner instanceof WhileStatement) {
             WhileStatement ws = (WhileStatement) inner;
             String condName = ws.f2.f0.tokenImage;
-            CPValue condVal = cp.getVarValue(cls, method, condName);
             addIfLive(live, condName, cls, method);
-            if (!condVal.isFalse()) {
-                Set<String> bodyLive = liveIn(unwrap(ws.f4),
-                        new LinkedHashSet<>(liveOut), cls, method);
-                live.addAll(bodyLive);
-            }
+            if (!cp.getVarValue(cls, method, condName).isFalse())
+                live.addAll(liveIn(unwrap(ws.f4), new LinkedHashSet<>(liveOut), cls, method));
 
         } else if (inner instanceof ForStatement) {
             ForStatement fs = (ForStatement) inner;
@@ -276,9 +287,7 @@ public class DeadCodeVisitor extends GJDepthFirst {
             live.addAll(usesOfExpression(fs.f10, cls, method));
             live.remove(fs.f2.f0.tokenImage);
             live.remove(fs.f8.f0.tokenImage);
-            Set<String> bodyLive = liveIn(unwrap(fs.f12),
-                    new LinkedHashSet<>(liveOut), cls, method);
-            live.addAll(bodyLive);
+            live.addAll(liveIn(unwrap(fs.f12), new LinkedHashSet<>(liveOut), cls, method));
 
         } else if (inner instanceof Block) {
             List<Node> inner2 = nodeListToList(((Block) inner).f1);
@@ -287,31 +296,18 @@ public class DeadCodeVisitor extends GJDepthFirst {
                 cur = liveIn(unwrap(inner2.get(i)), cur, cls, method);
             live = cur;
         }
-
         return live;
     }
 
     // ---------------------------------------------------------------
-    // Dead-code marking — RECURSIVE into nested bodies
-    //
-    // Previous version only ran markDeadStatement on the flat top-level
-    // list. This meant assignments inside if/while/block bodies were
-    // never examined. Now we recurse so every AssignmentStatement in
-    // the entire method body gets a chance to be marked dead.
-    //
-    // For each nested statement we recompute liveOut at that point:
-    // - For a Block: backward scan gives liveOut for each element
-    // - For an IfStatement branch: the liveOut of the branch is the
-    // liveOut of the whole if-statement (both branches exit to same point)
-    // - For a WhileStatement body: liveOut of body = liveIn of condition
-    // (conservatively the liveOut of the while, since loop may repeat)
+    // Dead-code marking — recursive into nested bodies
     // ---------------------------------------------------------------
 
     private void markDeadStatementRecursive(Node inner, Set<String> liveOut,
             String cls, String method) {
         if (inner instanceof AssignmentStatement) {
             AssignmentStatement as = (AssignmentStatement) inner;
-            if (!liveOut.contains(as.f0.f0.tokenImage) && !hasSideEffects(as.f2))
+            if (!liveOut.contains(as.f0.f0.tokenImage) && !hasSideEffectsToKeep(as, cls, method))
                 deadAssignments.add(inner);
 
         } else if (inner instanceof IfStatement) {
@@ -321,36 +317,24 @@ public class DeadCodeVisitor extends GJDepthFirst {
                 deadIfBranch.put(inner, "else");
             if (cv.isFalse())
                 deadIfBranch.put(inner, "then");
-
-            // Recurse into branches:
-            // liveOut for either branch body = liveOut of the whole if-statement
-            // (both branches flow to the same successor)
-            if (cv.isTrue() || !cv.isFalse()) {
-                // then-branch may execute
+            if (cv.isTrue() || !cv.isFalse())
                 recurseIntoBody(is.f4, liveOut, cls, method);
-            }
-            if (cv.isFalse() || !cv.isTrue()) {
-                // else-branch may execute
+            if (cv.isFalse() || !cv.isTrue())
                 recurseIntoBody(is.f6, liveOut, cls, method);
-            }
 
         } else if (inner instanceof WhileStatement) {
             WhileStatement ws = (WhileStatement) inner;
             CPValue cv = cp.getVarValue(cls, method, ws.f2.f0.tokenImage);
             if (cv.isFalse()) {
                 deadWhiles.add(inner);
-                return; // body unreachable — nothing to recurse into
+                return;
             }
-            // liveOut for the body = liveIn of the while (conservative:
-            // after the body, we re-evaluate the condition and may loop)
-            // The safest liveOut for the body is: liveOut of while ∪ uses(cond)
             Set<String> bodyLiveOut = new LinkedHashSet<>(liveOut);
             addIfLive(bodyLiveOut, ws.f2.f0.tokenImage, cls, method);
             recurseIntoBody(ws.f4, bodyLiveOut, cls, method);
 
         } else if (inner instanceof ForStatement) {
             ForStatement fs = (ForStatement) inner;
-            // liveOut for body = liveOut of for ∪ uses(stepExpr) ∪ uses(condExpr)
             Set<String> bodyLiveOut = new LinkedHashSet<>(liveOut);
             bodyLiveOut.addAll(usesOfExpression(fs.f6, cls, method));
             bodyLiveOut.addAll(usesOfExpression(fs.f10, cls, method));
@@ -359,35 +343,23 @@ public class DeadCodeVisitor extends GJDepthFirst {
         } else if (inner instanceof Block) {
             recurseIntoBlock((Block) inner, liveOut, cls, method);
         }
-        // AssignmentStatement handled above.
-        // PrintStatement, ArrayAssign, FieldAssign: always live, no sub-statements.
     }
 
-    /**
-     * Recurse into a Statement or Block body with the given liveOut.
-     */
     private void recurseIntoBody(Node bodyNode, Set<String> liveOut,
             String cls, String method) {
         Node inner = unwrap(bodyNode);
-        if (inner instanceof Block) {
+        if (inner instanceof Block)
             recurseIntoBlock((Block) inner, liveOut, cls, method);
-        } else {
+        else
             markDeadStatementRecursive(inner, liveOut, cls, method);
-        }
     }
 
-    /**
-     * Backward scan through a block's statement list to compute per-statement
-     * liveOut, then mark each statement dead if appropriate.
-     */
     private void recurseIntoBlock(Block b, Set<String> blockLiveOut,
             String cls, String method) {
         List<Node> stmts = nodeListToList(b.f1);
         int n = stmts.size();
         if (n == 0)
             return;
-
-        // Compute liveOut for each statement by backward scan
         @SuppressWarnings("unchecked")
         Set<String>[] lo = new Set[n];
         Set<String> cur = new LinkedHashSet<>(blockLiveOut);
@@ -395,26 +367,53 @@ public class DeadCodeVisitor extends GJDepthFirst {
             lo[i] = new LinkedHashSet<>(cur);
             cur = liveIn(unwrap(stmts.get(i)), cur, cls, method);
         }
-
-        // Recursively mark each statement
         for (int i = 0; i < n; i++)
             markDeadStatementRecursive(unwrap(stmts.get(i)), lo[i], cls, method);
     }
 
     // ---------------------------------------------------------------
-    // Side-effect check
+    // Side-effect check for assignment RHS
+    //
+    // An assignment x = expr; should be kept if:
+    // - expr is a MessageSend AND the callee has real side effects
+    //
+    // An assignment x = obj.foo(); should be DROPPED (not promoted) if:
+    // - callee has no side effects (pure constant return)
+    //
+    // An assignment x = obj.foo(); should be PROMOTED to void call if:
+    // - callee has side effects but x is dead
     // ---------------------------------------------------------------
 
-    private boolean hasSideEffects(Expression expr) {
-        return expr.f0.choice instanceof MessageSend;
+    private boolean hasSideEffectsToKeep(AssignmentStatement as,
+            String cls, String method) {
+        if (!(as.f2.f0.choice instanceof MessageSend))
+            return false;
+        // It's a MessageSend — keep if the callee has side effects
+        // (will be promoted to void call in CodeGen)
+        // Drop if the callee is pure (constant return, no side effects)
+        MessageSend ms = (MessageSend) as.f2.f0.choice;
+        String methodName = ms.f2.f0.tokenImage;
+        String receiverType = resolveReceiverType(ms, cls, method);
+        if (receiverType == null)
+            return true; // unknown -> conservative keep
+
+        Set<String> candidates = new LinkedHashSet<>();
+        candidates.add(receiverType);
+        candidates.addAll(ch.allSubclasses(receiverType));
+        for (String candidate : candidates) {
+            String dc2 = ch.declaringClass(candidate, methodName);
+            if (dc2 != null && cg.reachable(dc2, methodName))
+                if (cp.methodHasSideEffects(dc2, methodName))
+                    return true;
+        }
+        return false; // all targets are pure -> safe to drop
     }
 
     // ---------------------------------------------------------------
     // CP-aware uses of an expression
     // ---------------------------------------------------------------
 
-    private Set<String> usesOfExpression(Expression expr,
-            String cls, String method) {
+    private Set<String> usesOfExpression(Expression expr, String cls, String method) {
         Set<String> uses = new LinkedHashSet<>();
         Node choice = expr.f0.choice;
 
@@ -442,18 +441,22 @@ public class DeadCodeVisitor extends GJDepthFirst {
             uses.add(((ArrayLength) choice).f0.f0.tokenImage);
         } else if (choice instanceof MessageSend) {
             MessageSend ms = (MessageSend) choice;
+            // Receiver: always live (object reference)
             Node recv = ms.f0.f0.choice;
-            if (recv instanceof Identifier)
-                uses.add(((Identifier) recv).f0.tokenImage);
-            if (ms.f4.present()) {
+            if (recv instanceof Identifier) {
+                // Only live if the callee is not dead (its return is substituted)
+                // but receiver object must still exist -> keep it live
+                String receiverType = resolveReceiverType(ms, cls, method);
+                if (!isCalleeConstantAndPure(ms, cls, method))
+                    uses.add(((Identifier) recv).f0.tokenImage);
+            }
+            // Args: only live if callee is not dead
+            if (!isCalleeConstantAndPure(ms, cls, method) && ms.f4.present()) {
                 ArgList al = (ArgList) ms.f4.node;
                 addIfLive(uses, al.f0.f0.tokenImage, cls, method);
-                if (al.f1.present()) {
-                    for (Enumeration<Node> e = al.f1.elements(); e.hasMoreElements();) {
-                        ArgRest ar = (ArgRest) e.nextElement();
-                        addIfLive(uses, ar.f1.f0.tokenImage, cls, method);
-                    }
-                }
+                if (al.f1.present())
+                    for (Enumeration<Node> e = al.f1.elements(); e.hasMoreElements();)
+                        addIfLive(uses, ((ArgRest) e.nextElement()).f1.f0.tokenImage, cls, method);
             }
         } else if (choice instanceof FieldRead) {
             uses.add(((FieldRead) choice).f0.f0.tokenImage);
@@ -464,20 +467,72 @@ public class DeadCodeVisitor extends GJDepthFirst {
             else if (prim instanceof NotExpression)
                 addIfLive(uses, ((NotExpression) prim).f1.f0.tokenImage, cls, method);
             else if (prim instanceof ArrayAllocationExpression)
-                addIfLive(uses, ((ArrayAllocationExpression) prim).f3.f0.tokenImage,
-                        cls, method);
+                addIfLive(uses, ((ArrayAllocationExpression) prim).f3.f0.tokenImage, cls, method);
         }
         return uses;
     }
 
-    // ---------------------------------------------------------------
-    // addIfLive: only add to live set if CP won't substitute this var
-    // ---------------------------------------------------------------
+    /**
+     * Returns true if all CHA targets of this MessageSend are
+     * constant-returning and side-effect-free (i.e., the whole call
+     * will be CP-substituted and the callee eliminated).
+     */
+    private boolean isCalleeConstantAndPure(MessageSend ms, String cls, String method) {
+        String methodName = ms.f2.f0.tokenImage;
+        String receiverType = resolveReceiverType(ms, cls, method);
+        if (receiverType == null)
+            return false;
 
-    private void addIfLive(Set<String> liveSet, String varName,
-            String cls, String method) {
+        CPValue ret = cp.getReturnValue(receiverType, methodName);
+        if (!ret.isConst())
+            return false;
+
+        Set<String> candidates = new LinkedHashSet<>();
+        candidates.add(receiverType);
+        candidates.addAll(ch.allSubclasses(receiverType));
+        for (String candidate : candidates) {
+            String dc2 = ch.declaringClass(candidate, methodName);
+            if (dc2 != null && cg.reachable(dc2, methodName))
+                if (cp.methodHasSideEffects(dc2, methodName))
+                    return false;
+        }
+        return true;
+    }
+
+    private void addIfLive(Set<String> liveSet, String varName, String cls, String method) {
         if (!cp.getIdValue(cls, method, varName).isConst())
             liveSet.add(varName);
+    }
+
+    private boolean hasSideEffects(Expression expr) {
+        return expr.f0.choice instanceof MessageSend;
+    }
+
+    // ---------------------------------------------------------------
+    // Receiver type resolution (for use outside CP context)
+    // ---------------------------------------------------------------
+
+    private String resolveReceiverType(MessageSend ms, String cls, String method) {
+        Node choice = ms.f0.f0.choice;
+        if (choice instanceof Identifier)
+            return st.typeOf(cls, method, ((Identifier) choice).f0.tokenImage);
+        if (choice instanceof ThisExpression)
+            return cls;
+        if (choice instanceof AllocationExpression)
+            return ((AllocationExpression) choice).f1.f0.tokenImage;
+        return null;
+    }
+
+    /** Overload for use in dropMessageSendCall (no cls/method context). */
+    private String resolveReceiverType(MessageSend ms) {
+        // Without context we can't resolve Identifier receivers.
+        // dropMessageSendCall is called from CodeGen which has context —
+        // but we don't pass it. For now, AllocationExpression is the
+        // common case; others fall back to conservative (no drop).
+        Node choice = ms.f0.f0.choice;
+        if (choice instanceof AllocationExpression)
+            return ((AllocationExpression) choice).f1.f0.tokenImage;
+        return null;
     }
 
     // ---------------------------------------------------------------
@@ -492,9 +547,9 @@ public class DeadCodeVisitor extends GJDepthFirst {
 
     private List<Node> getStatementList(String cls, String method) {
         NodeListOptional nlo;
-        if ("main".equals(method) && mainClassNode != null) {
+        if ("main".equals(method) && mainClassNode != null)
             nlo = mainClassNode.f15;
-        } else {
+        else {
             MethodDeclaration md = lookupMethod(cls, method);
             if (md == null)
                 return null;

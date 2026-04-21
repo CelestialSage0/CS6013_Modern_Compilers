@@ -48,9 +48,9 @@ public class InterConstPropVisitor {
     // ---------------------------------------------------------------
     // Constructor
     // ---------------------------------------------------------------
-    public InterConstPropVisitor(ClassHierarchyVisitor ch,
-            SymbolTableVisitor st,
-            CallGraphVisitor cg,
+    public InterConstPropVisitor(ClassHierarchy ch,
+            SymbolTable st,
+            CallGraph cg,
             ConstPropVisitor cpv) {
         this.ch = ch;
         this.st = st;
@@ -265,7 +265,7 @@ public class InterConstPropVisitor {
     // ---------------------------------------------------------------
     // Inner helper: collects MessageSend nodes from a subtree
     // ---------------------------------------------------------------
-    private static class MessageSendCollector extends GJDepthFirst<Object, Object> {
+    private static class MessageSendCollector extends GJDepthFirst {
         @SuppressWarnings("unchecked")
         @Override
         public Object visit(MessageSend n, Object argu) {

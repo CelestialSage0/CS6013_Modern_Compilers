@@ -296,13 +296,14 @@ public class CodeGen extends GJDepthFirst {
 
     private void emitAssignment(AssignmentStatement as) {
         if (dc.isDeadAssignment(as)) {
-            // If RHS is a MessageSend, promote to void call (has side effects)
-            if (as.f2.f0.choice instanceof MessageSend) {
+            if (as.f2.f0.choice instanceof MessageSend
+                    && !dc.dropMessageSendCall(as)) {
+                // Callee has side effects -> promote to void call statement
                 emit(ind());
                 emitMessageSend((MessageSend) as.f2.f0.choice);
                 emitLn(";");
             }
-            // Pure RHS -> drop entirely
+            // Pure callee (constant return, no side effects) -> drop entirely
             return;
         }
         emit(ind() + as.f0.f0.tokenImage + " = ");

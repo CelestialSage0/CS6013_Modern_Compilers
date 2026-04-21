@@ -1,6 +1,11 @@
 class Main {
    public static void main(String [] a) {
-      System.out.println(5);
+      int result;
+      result = obj.live(5);
+      System.out.println(result);
    }
+}
+
+class A {
 }
 
