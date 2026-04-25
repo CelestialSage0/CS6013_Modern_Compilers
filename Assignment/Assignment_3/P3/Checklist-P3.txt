@@ -1,0 +1,21 @@
+Checklist for Assignment P3
+
+1) Have you compressed the file as XXXXXXXX.P3.tar.gz (your-8-digit-roll-number.P3), for example CS23S002.P3.tar.gz? Yes
+
+2) Does your .tar.gz archive expand to the project directory named XXXXXXXX (your 8-digit roll number), which contains only a subdirectory named P3 which further contains one directory "llm" ? Yes
+
+3) Does your P3 directory contains this checklist file named as Checklist-P3 and the prompt log named as prompt-log-P3 which was used to prepare the llm based solution? Yes
+
+3) Have you removed all the *.class files and *.jar files from your project directory before submission the .tar.gz file? Yes
+
+4) Does your "llm" directory contain P3.java, which can be compiled using the command "javac P3.java" (using: 8 <= java version <= 21)? Yes
+
+5) Does your generated P3 program inside "llm" directory take input from Standard Input (for usage of redirection)? Yes
+
+6) Does your generated P3 program inside "llm" directory write output to Standard Output (for usage of redirection)? Yes
+
+7) Have you removed all the debugging messages or additional print statements that your program may output? Yes
+
+8) Is (some part of) the assignment plagiarized ? If yes, please mention the source (website links, or another student's roll-number).
+
+9) Any comments about your evaluation strategy : 
