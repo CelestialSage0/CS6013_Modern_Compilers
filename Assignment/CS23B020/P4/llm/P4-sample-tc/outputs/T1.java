@@ -1,12 +1,14 @@
 class T1 {
-    public static void main (String[] args) {
+    public static void main(String[] args) {
         T1A a;
         a = new T1A();
         a.foo();
     }
 }
-class T1A{
+
+class T1A {
     int f;
+
     public int foo() {
         T1A x;
         T1B y;
@@ -20,20 +22,24 @@ class T1A{
         val = 99;
         x.f = val;
         ret = x.f;
-        System.out.println (ret);
+        System.out.println(ret);
         y = new T1B();
+
         temp_00 = y;
         temp_01 = 77;
         temp_00.f = temp_01;
         temp_02 = temp_00.f;
-        System.out.println (temp_02);
+        System.out.println(temp_02);
+
         ret = x.f;
-        System.out.println (ret);
+        System.out.println(ret);
         return ret;
     }
 }
-class T1B{
+
+class T1B {
     int f;
+
     public int target1() {
         T1B x;
         int val;
@@ -42,7 +48,7 @@ class T1B{
         val = 77;
         x.f = val;
         ret = x.f;
-        System.out.println (ret);
+        System.out.println(ret);
         return ret;
     }
-}   
+}

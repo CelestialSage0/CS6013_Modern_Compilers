@@ -1,47 +1,31 @@
 
 // input
 
-class Test02 {
+class Test03 {
     public static void main(String[] args) {
-        FooInator fooer;
         A object;
-        fooer = new FooInator();
+        int x;
         object = new A();
         /* INLINE */
-        fooer.fooIfy(object);
-        object = new B();
-        /* INLINE */
-        fooer.fooIfy(object);
-        object = new C();
-        /* INLINE */
-        fooer.fooIfy(object);
+        x = object.foo(5);
+        System.out.println(x);
     }
 }
 
 class A {
-    public int foo() {
-        return 1;
-    }
-}
-
-class B extends A {
-    public int foo() {
-        return 2;
-    }
-}
-
-class C extends B {
-    public int foo() {
-        return 3;
-    }
-}
-
-class FooInator {
-    public int fooIfy(A object) {
-        int z;
-        /* INLINE */
-        z = object.foo();
-        System.out.println(z);
-        return z;
+    public int foo(int x) {
+        boolean b;
+        int y;
+        b = x < 1;
+        if (b)
+            y = 1;
+        else {
+            x = x - 1;
+            /* INLINE */
+            y = this.foo(x);
+            x = x + 1;
+            y = y * x;
+        }
+        return y;
     }
 }

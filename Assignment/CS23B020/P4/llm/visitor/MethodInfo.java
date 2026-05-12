@@ -3,35 +3,28 @@ package visitor;
 import syntaxtree.*;
 import java.util.*;
 
+/**
+ * All information about a single method needed for inlining.
+ */
 public class MethodInfo {
-  public String name;
-  public String returnType;
-  public String ownerClass;
+    public String ownerClass;
+    public String name;
+    public String returnTypeName; // "int", "boolean", "int[]", or class name
 
-  // ordered list of parameter names
-  public List<String> paramNames = new ArrayList<>();
-  // param name -> declared type
-  public Map<String, String> paramTypes = new LinkedHashMap<>();
+    // Parameters in order: each entry is [typeName, paramName]
+    public List<String[]> params = new ArrayList<>();
 
-  // ordered list of local variable names (excluding params)
-  public List<String> localNames = new ArrayList<>();
-  // local name -> declared type
-  public Map<String, String> localTypes = new LinkedHashMap<>();
+    // Local variable declarations in order: each entry is [typeName, varName]
+    public List<String[]> locals = new ArrayList<>();
 
-  // AST node for the full method declaration
-  public MethodDeclaration astNode;
+    // The AST node of the method – kept so we can inline by walking it
+    public MethodDeclaration astNode;
 
-  public MethodInfo(String name, String returnType, String ownerClass) {
-    this.name = name;
-    this.returnType = returnType;
-    this.ownerClass = ownerClass;
-  }
-
-  /** All variables declared in the method (params + locals), name -> type */
-  public Map<String, String> allVarTypes() {
-    Map<String, String> all = new LinkedHashMap<>();
-    all.putAll(paramTypes);
-    all.putAll(localTypes);
-    return all;
-  }
+    public MethodInfo(String ownerClass, String name, String returnTypeName,
+            MethodDeclaration astNode) {
+        this.ownerClass = ownerClass;
+        this.name = name;
+        this.returnTypeName = returnTypeName;
+        this.astNode = astNode;
+    }
 }
