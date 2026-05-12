@@ -25,23 +25,39 @@ public class PointsToVisitor extends GJDepthFirst<String, InlineContext> {
 
     @Override
     public String visit(ClassDeclaration n, InlineContext ctx) {
+        ctx.currentClass = n.f1.accept(this, ctx);
         n.f4.accept(this, ctx);
         return null;
     }
 
     @Override
     public String visit(ClassExtendsDeclaration n, InlineContext ctx) {
+        ctx.currentClass = n.f1.accept(this, ctx);
         n.f6.accept(this, ctx);
         return null;
     }
 
     @Override
     public String visit(MethodDeclaration n, InlineContext ctx) {
-        // Only clear pointsTo if we are analyzing the method from the root (not
-        // simulating an inline)
         if (ctx.callStack.isEmpty()) {
             ctx.pointsTo.clear();
-            n.f8.accept(this, ctx);
+
+            // Seed 'this' so independent method walks can evaluate internal calls
+            if (ctx.currentClass != null) {
+                ctx.pointsTo.put("this", ctx.currentClass);
+            }
+
+            String methName = n.f2.accept(this, ctx);
+            ClassInfo ci = ctx.classTable.get(ctx.currentClass);
+            MethodInfo mi = ci != null ? ci.lookupMethod(methName, ctx.classTable) : null;
+
+            if (mi != null)
+                ctx.activeMethods.add(mi); // Mark as currently exploring
+
+            n.f8.accept(this, ctx); // Walk statements
+
+            if (mi != null)
+                ctx.activeMethods.remove(mi);
         }
         return null;
     }
@@ -90,12 +106,9 @@ public class PointsToVisitor extends GJDepthFirst<String, InlineContext> {
         boolean doInline = n.f0.present();
         Node sendNode = n.f1.choice;
         MessageSend ms;
-        String lhsVar = null;
 
         if (sendNode instanceof RetMessageSendStmt) {
-            RetMessageSendStmt r = (RetMessageSendStmt) sendNode;
-            ms = r.f2;
-            lhsVar = r.f0.f0.tokenImage;
+            ms = ((RetMessageSendStmt) sendNode).f2;
         } else {
             ms = ((VoidMessageSendStmt) sendNode).f0;
         }
@@ -110,10 +123,15 @@ public class PointsToVisitor extends GJDepthFirst<String, InlineContext> {
                 MethodInfo mi = ci.lookupMethod(methodName, ctx.classTable);
 
                 if (mi != null) {
-                    // Record the resolution context-sensitively
-                    InlineContext.CallPath path = new InlineContext.CallPath(ctx.callStack, ms);
+                    // ==========================================================
+                    // 1. Detect Recursion (Direct or Indirect) and Blacklist it
+                    // ==========================================================
+                    if (ctx.activeMethods.contains(mi)) {
+                        ctx.recursiveMethods.add(mi);
+                    }
 
-                    // Guard against paths becoming polymorphic inside loops
+                    // 2. Record Resolution Context-Sensitively
+                    InlineContext.CallPath path = new InlineContext.CallPath(ctx.callStack, ms);
                     String existing = ctx.callSiteResolutions.get(path);
                     if (existing != null && !existing.equals(concreteClass)) {
                         ctx.callSiteResolutions.put(path, "POLYMORPHIC");
@@ -121,34 +139,39 @@ public class PointsToVisitor extends GJDepthFirst<String, InlineContext> {
                         ctx.callSiteResolutions.put(path, concreteClass);
                     }
 
+                    // 3. Simulate Inline (ONLY if it's safe and NOT recursive)
                     boolean tryInline = doInline || !ctx.callStack.isEmpty();
-
                     if (tryInline && !ctx.callSiteResolutions.get(path).equals("POLYMORPHIC")) {
-                        // SIMULATE INLINING (Context-Sensitive Flow)
-                        List<String> args = collectArgs(ms.f4, ctx);
-                        Map<String, String> savedPoints = new LinkedHashMap<>(ctx.pointsTo);
-                        Map<String, String> newPoints = new LinkedHashMap<>();
 
-                        for (int i = 0; i < mi.params.size(); i++) {
-                            String pname = mi.params.get(i)[1];
-                            String arg = (i < args.size()) ? args.get(i) : null;
-                            if (arg != null && ctx.pointsTo.containsKey(arg)) {
-                                newPoints.put(pname, ctx.pointsTo.get(arg));
+                        // Abort simulation entirely if this method is on the recursion blacklist
+                        if (!ctx.recursiveMethods.contains(mi)) {
+                            ctx.activeMethods.add(mi);
+
+                            List<String> args = collectArgs(ms.f4, ctx);
+                            Map<String, String> savedPoints = new LinkedHashMap<>(ctx.pointsTo);
+                            Map<String, String> newPoints = new LinkedHashMap<>();
+
+                            for (int i = 0; i < mi.params.size(); i++) {
+                                String pname = mi.params.get(i)[1];
+                                String arg = (i < args.size()) ? args.get(i) : null;
+                                if (arg != null && ctx.pointsTo.containsKey(arg)) {
+                                    newPoints.put(pname, ctx.pointsTo.get(arg));
+                                }
                             }
+                            newPoints.put("this", concreteClass);
+
+                            ctx.pointsTo = newPoints;
+                            ctx.callStack.push(ms);
+
+                            MethodDeclaration md = mi.astNode;
+                            for (Enumeration<Node> e = md.f8.elements(); e.hasMoreElements();) {
+                                e.nextElement().accept(this, ctx);
+                            }
+
+                            ctx.callStack.pop();
+                            ctx.pointsTo = savedPoints;
+                            ctx.activeMethods.remove(mi);
                         }
-                        newPoints.put("this", concreteClass);
-
-                        ctx.pointsTo = newPoints;
-                        ctx.callStack.push(ms); // Push context
-
-                        // Traverse the callee's statements context-sensitively
-                        MethodDeclaration md = mi.astNode;
-                        for (Enumeration<Node> e = md.f8.elements(); e.hasMoreElements();) {
-                            e.nextElement().accept(this, ctx);
-                        }
-
-                        ctx.callStack.pop(); // Pop context
-                        ctx.pointsTo = savedPoints; // Restore caller state
                     }
                 }
             }

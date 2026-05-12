@@ -20,28 +20,26 @@ public class InlineVisitor extends GJDepthFirst<String, InlineContext> {
         ctx.currentClass = n.f1.accept(this, ctx);
         ctx.callStack.clear();
 
+        ctx.currentMethod = ctx.classTable.get(ctx.currentClass).lookupMethod("main", ctx.classTable);
+
         ctx.emitLine("class " + ctx.currentClass + " {");
         ctx.indent();
         ctx.emitLine("public static void main (String[] args) {");
         ctx.indent();
 
-        // Buffer statements so we can print hoisted inlined variables first
         StringBuilder saved = ctx.sb;
         ctx.sb = new StringBuilder();
         n.f15.accept(this, ctx);
         String stmts = ctx.sb.toString();
         ctx.sb = saved;
 
-        // Print original variables
         n.f14.accept(this, ctx);
 
-        // Print hoisted inline variables
         for (String d : ctx.pendingVarDecls) {
             ctx.emitLine(d);
         }
         ctx.pendingVarDecls.clear();
 
-        // Print the evaluated statements
         ctx.emit(stmts);
 
         ctx.dedent();
@@ -92,6 +90,8 @@ public class InlineVisitor extends GJDepthFirst<String, InlineContext> {
         String retType = n.f1.accept(this, ctx);
         String methName = n.f2.accept(this, ctx);
         String params = n.f4.present() ? n.f4.node.accept(this, ctx) : "";
+
+        ctx.currentMethod = ctx.classTable.get(ctx.currentClass).lookupMethod(methName, ctx.classTable);
 
         ctx.emitLine("public " + retType + " " + methName + " (" + params + ") {");
         ctx.indent();
@@ -153,10 +153,6 @@ public class InlineVisitor extends GJDepthFirst<String, InlineContext> {
     public String visit(IntegerType n, InlineContext ctx) {
         return "int";
     }
-
-    // ==============================================================================
-    // Statements (Restored all Missing Statements!)
-    // ==============================================================================
 
     @Override
     public String visit(Statement n, InlineContext ctx) {
@@ -251,19 +247,37 @@ public class InlineVisitor extends GJDepthFirst<String, InlineContext> {
         }
 
         String receiver = ms.f0.accept(this, ctx);
-        String methodName = ms.f2.accept(this, ctx);
+        String methodName = ms.f2.f0.tokenImage;
         List<String> args = collectArgs(ms.f4, ctx);
 
         boolean tryInline = doInline || !ctx.callStack.isEmpty();
-
-        // Check context path with Pass 2
         InlineContext.CallPath path = new InlineContext.CallPath(ctx.callStack, ms);
         String concreteClass = ctx.callSiteResolutions.get(path);
 
         if (tryInline && concreteClass != null && !concreteClass.equals("POLYMORPHIC")) {
             ClassInfo ci = ctx.classTable.get(concreteClass);
             MethodInfo mi = ci.lookupMethod(methodName, ctx.classTable);
-            inlineMethod(ctx, mi, receiver, args, lhsVar, ms);
+
+            String declaredType = ctx.getDeclaredType(receiver);
+            boolean isTypeSafe = ctx.isSubtype(declaredType, mi.ownerClass);
+
+            // ==============================================================================
+            // CRITICAL FIX: Pure methods (no 'this' usage) are safe to inline anywhere!
+            // ==============================================================================
+            boolean canInline = isTypeSafe;
+            if (!canInline) {
+                HasThisVisitor htv = new HasThisVisitor();
+                mi.astNode.accept(htv, ctx);
+                if (!htv.hasThis) {
+                    canInline = true;
+                }
+            }
+
+            if (ctx.recursiveMethods.contains(mi) || !canInline) {
+                emitCall(ctx, lhsVar, receiver, methodName, args); // Fallback to call
+            } else {
+                inlineMethod(ctx, mi, receiver, args, lhsVar, ms); // Safe to inline
+            }
         } else {
             emitCall(ctx, lhsVar, receiver, methodName, args);
         }
@@ -273,57 +287,68 @@ public class InlineVisitor extends GJDepthFirst<String, InlineContext> {
     private void inlineMethod(InlineContext ctx, MethodInfo mi, String receiver, List<String> callArgs,
             String rawLhsVar, MessageSend msNode) {
 
-        // ==============================================================================
-        // CRITICAL FIX: Resolve the caller's LHS variable using the caller's
-        // substitution
-        // map BEFORE we pollute it with the callee's parameters!
-        // ==============================================================================
         String resolvedLhs = (rawLhsVar != null) ? ctx.subst(rawLhsVar) : null;
-
         Map<String, String> savedSubst = new LinkedHashMap<>(ctx.varSubst);
         Map<String, String> newSubst = new LinkedHashMap<>(ctx.varSubst);
 
-        // Map params
         for (int i = 0; i < mi.params.size(); i++) {
             String pname = mi.params.get(i)[1];
             String ptype = mi.params.get(i)[0];
             String arg = (i < callArgs.size()) ? callArgs.get(i) : "0";
-            String tmp = ctx.freshTemp(pname);
+            String tmp = ctx.freshTemp(pname, ptype);
             ctx.pendingVarDecls.add(ptype + " " + tmp + ";");
             ctx.emitLine(tmp + " = " + arg + ";");
             newSubst.put(pname, tmp);
         }
 
-        // Map locals
         for (String[] loc : mi.locals) {
             String lname = loc[1];
             String ltype = loc[0];
-            String tmp = ctx.freshTemp(lname);
+            String tmp = ctx.freshTemp(lname, ltype);
             ctx.pendingVarDecls.add(ltype + " " + tmp + ";");
             newSubst.put(lname, tmp);
         }
 
         newSubst.put("this", receiver);
+
+        // ==============================================================================
+        // CRITICAL FIX: Map bare field accesses directly to the receiver object!
+        // This ensures heap reads are dynamic and never cached as stale temps.
+        // ==============================================================================
+        ClassInfo ci = ctx.classTable.get(mi.ownerClass);
+        while (ci != null) {
+            for (String fieldName : ci.fields.keySet()) {
+                // Map the field only if it's not shadowed by a method parameter or local
+                // variable
+                if (!newSubst.containsKey(fieldName)) {
+                    newSubst.put(fieldName, receiver + "." + fieldName);
+                }
+            }
+            if (ci.parent == null)
+                break;
+            ci = ctx.classTable.get(ci.parent);
+        }
+
         ctx.varSubst = newSubst;
 
-        // Traverse method statements (we can emit custom braces here too if you
-        // prefer!)
+        ctx.activeMethods.add(mi);
         ctx.emitLine("{");
         ctx.indent();
         ctx.callStack.push(msNode);
+
         for (Enumeration<Node> e = mi.astNode.f8.elements(); e.hasMoreElements();) {
             e.nextElement().accept(this, ctx);
         }
-        ctx.callStack.pop();
 
-        // Assign return value back to the correctly resolved LHS variable
+        ctx.callStack.pop();
+        ctx.dedent();
+        ctx.emitLine("}");
+        ctx.activeMethods.remove(mi);
+
         if (resolvedLhs != null) {
             String returnValue = mi.astNode.f10.accept(this, ctx);
             ctx.emitLine(resolvedLhs + " = " + returnValue + ";");
         }
-
-        ctx.dedent();
-        ctx.emitLine("}");
 
         ctx.varSubst = savedSubst;
     }
@@ -335,10 +360,6 @@ public class InlineVisitor extends GJDepthFirst<String, InlineContext> {
         else
             ctx.emitLine(call + ";");
     }
-
-    // ==============================================================================
-    // Expressions
-    // ==============================================================================
 
     @Override
     public String visit(Expression n, InlineContext ctx) {
@@ -437,7 +458,7 @@ public class InlineVisitor extends GJDepthFirst<String, InlineContext> {
 
     @Override
     public String visit(DotExpression n, InlineContext ctx) {
-        return ctx.subst(n.f0.accept(this, ctx)) + "." + n.f2.accept(this, ctx);
+        return n.f0.accept(this, ctx) + "." + n.f2.f0.tokenImage;
     }
 
     @Override
@@ -458,7 +479,7 @@ public class InlineVisitor extends GJDepthFirst<String, InlineContext> {
     @Override
     public String visit(MessageSend n, InlineContext ctx) {
         List<String> args = collectArgs(n.f4, ctx);
-        return n.f0.accept(this, ctx) + "." + n.f2.accept(this, ctx) + " (" + String.join(", ", args) + ")";
+        return n.f0.accept(this, ctx) + "." + n.f2.f0.tokenImage + " (" + String.join(", ", args) + ")";
     }
 
     private List<String> collectArgs(NodeOptional argListOpt, InlineContext ctx) {
@@ -470,5 +491,18 @@ public class InlineVisitor extends GJDepthFirst<String, InlineContext> {
         for (Enumeration<Node> e = al.f1.elements(); e.hasMoreElements();)
             result.add(((ArgRest) e.nextElement()).f1.accept(this, ctx));
         return result;
+    }
+}
+
+// ==============================================================================
+// Utility Visitor to scan for 'this' usage in a MethodDeclaration
+// ==============================================================================
+class HasThisVisitor extends GJDepthFirst<String, InlineContext> {
+    public boolean hasThis = false;
+
+    @Override
+    public String visit(ThisExpression n, InlineContext ctx) {
+        hasThis = true;
+        return null;
     }
 }

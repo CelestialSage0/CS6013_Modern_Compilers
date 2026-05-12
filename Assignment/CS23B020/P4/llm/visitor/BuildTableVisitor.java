@@ -27,13 +27,24 @@ public class BuildTableVisitor extends GJDepthFirst<String, Map<String, ClassInf
     }
 
     // ------------------------------------------------------------------
-    // MainClass — register it; no methods to collect
+    // MainClass — register it and collect its locals!
     // ------------------------------------------------------------------
     @Override
     public String visit(MainClass n, Map<String, ClassInfo> tbl) {
         String name = n.f1.accept(this, tbl);
         currentClass = new ClassInfo(name, null);
         tbl.put(name, currentClass);
+
+        // ==========================================================
+        // CRITICAL FIX: Track main's local variables
+        // ==========================================================
+        currentMethod = new MethodInfo(name, "main", "void", null);
+        inMethodLocals = true;
+        n.f14.accept(this, tbl); // ( VarDeclaration() )*
+        inMethodLocals = false;
+        currentClass.methods.put("main", currentMethod);
+        currentMethod = null;
+
         return null;
     }
 
