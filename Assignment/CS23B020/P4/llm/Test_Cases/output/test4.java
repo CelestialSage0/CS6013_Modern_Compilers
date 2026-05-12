@@ -1,0 +1,29 @@
+class Main {
+  public static void main(String[] args) {
+    Counter c;
+    int v;
+    int TEMP_0;
+    c = new Counter();
+    TEMP_0 = c.value + c.step;
+    v = TEMP_0;
+    System.out.println(v);
+  }
+}
+
+class Base {
+  int value;
+
+  public int getValue() {
+    return this.value;
+  }
+}
+
+class Counter extends Base {
+  int step;
+
+  public int getValue() {
+    int tmp;
+    tmp = this.value + this.step;
+    return tmp;
+  }
+}
