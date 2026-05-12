@@ -1,6 +1,6 @@
 
 class T2 {
-	public static void main (String [] args) {
+	public static void main(String[] args) {
 		T2A a1;
 		T2A a2;
 		T2B b1;
@@ -14,7 +14,7 @@ class T2 {
 		a1 = new T2A();
 		a2 = new T2A();
 		bl = c < d;
-		if(bl)
+		if (bl)
 			b1 = new T2B();
 		else
 			b1 = new T2C();
@@ -24,8 +24,9 @@ class T2 {
 		System.out.println(r2);
 	}
 }
-class T2A{
-	public int foo(T2B b){
+
+class T2A {
+	public int foo(T2B b) {
 		int r;
 		int i;
 		i = 0;
@@ -34,14 +35,16 @@ class T2A{
 		return i;
 	}
 }
-class T2B{
+
+class T2B {
 	public int bar() {
 		int j;
 		j = 88;
 		return j;
 	}
 }
-class T2C extends T2B{
+
+class T2C extends T2B {
 	public int bar() {
 		int k;
 		k = 77;

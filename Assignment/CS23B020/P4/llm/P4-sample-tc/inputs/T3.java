@@ -1,6 +1,6 @@
 
 class T3 {
-	public static void main (String [] args) {
+	public static void main(String[] args) {
 		T3A a1;
 		T3A a2;
 		T3B b1;
@@ -17,17 +17,19 @@ class T3 {
 		System.out.println(r2);
 	}
 }
-class T3A{
-	public int foo(T3B b){
+
+class T3A {
+	public int foo(T3B b) {
 		int r;
 		int i;
 		i = 0;
-		/* INLINE */ r = b.bar();
+		r = b.bar();
 		System.out.println(r);
 		return i;
 	}
 }
-class T3B{
+
+class T3B {
 	public int bar() {
 		int j;
 		j = 88;
@@ -35,7 +37,8 @@ class T3B{
 		return j;
 	}
 }
-class T3C extends T3B{
+
+class T3C extends T3B {
 	public int bar() {
 		int k;
 		k = 77;

@@ -105,6 +105,7 @@ public class TypeFlowVisitor extends GJDepthFirst<String, Map<String, Set<String
             return null;
 
         Set<String> types = ptOf(receiverName, stack);
+        // System.err.println(receiverName + " : " + types);
         return (types.size() == 1) ? types.iterator().next() : null;
     }
 
@@ -344,8 +345,9 @@ public class TypeFlowVisitor extends GJDepthFirst<String, Map<String, Set<String
         String concreteClass = resolveReceiver(ms, argu);
 
         if (concreteClass != null) {
-            if (hasInline)
+            if (hasInline) {
                 inlineTargets.put(n, concreteClass);
+            }
 
             // Always recurse into callee (guarded against cycles)
             String callKey = concreteClass + "." + methodName;

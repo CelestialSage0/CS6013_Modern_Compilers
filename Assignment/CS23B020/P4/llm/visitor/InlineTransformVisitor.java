@@ -612,8 +612,10 @@ public class InlineTransformVisitor extends GJDepthFirst<Void, Void> {
       emitRegularCall(ms, lhs);
       return;
     }
-    emitln(" ");
+    emitln(ind() + "{");
+    indent++;
 
+    System.err.println(concreteClass + " : " + methodName);
     int myCounter = inlineCounter++;
     String prefix = "_il" + myCounter + "_";
     String thisVar = prefix + "this";
@@ -670,8 +672,8 @@ public class InlineTransformVisitor extends GJDepthFirst<Void, Void> {
       String retExpr = str(calleeMD.f10); // renaming is still calleeRenaming here
       emitln(ind() + lhs + " = " + retExpr + ";");
     }
-    emitln(" ");
-
+    indent--;
+    emitln(ind() + "}");
     renaming = outerRenaming;
     ptStack = outerPtStack;
   }
